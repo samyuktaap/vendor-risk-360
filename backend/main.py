@@ -78,10 +78,20 @@ def add_vendor(vendor: VendorCreate):
         conn.close()
         raise HTTPException(status_code=400, detail=f"Vendor with domain '{vendor.domain}' already exists.")
 
-    # Compute risk score
-    score_data = compute_vendor_risk_score(vendor.domain, vendor.name)
-    breakdown = score_data["breakdown"]
+    # Compute 100% live risk score across all 7 vectors
+    try:
+        score_data = compute_vendor_risk_score(vendor.domain, vendor.name)
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Live risk scoring failed: {str(e)}")
+
+    breakdown = score_data.get("breakdown", {})
     now = datetime.utcnow().isoformat()
+
+    # Safely extract sub-scores — each service returns its own key name
+    hibp_score   = breakdown.get("hibp", {}).get("hibp_score", 0)
+    news_score   = breakdown.get("news", {}).get("news_score", 0)
+    abuse_score  = breakdown.get("abuseipdb", {}).get("score", 0)
 
     cursor.execute("""
         INSERT INTO vendors (name, domain, sector, risk_tier, risk_score, hibp_score, news_score, sanctions_score, last_checked_at, created_at)
@@ -92,9 +102,9 @@ def add_vendor(vendor: VendorCreate):
         vendor.sector,
         score_data["risk_tier"],
         score_data["overall_score"],
-        breakdown["hibp"]["score"],
-        breakdown["news"]["score"],
-        breakdown["sanctions"]["score"],
+        hibp_score,
+        news_score,
+        abuse_score,
         now,
         now
     ))
@@ -109,7 +119,7 @@ def add_vendor(vendor: VendorCreate):
         vendor.name,
         "Vendor Onboarding",
         f"New Vendor Onboarded: {vendor.name}",
-        f"Initial security risk evaluation completed with score {score_data['overall_score']}/100 ({score_data['risk_tier']} Risk).",
+        f"Live security risk assessment completed — {score_data['overall_score']}/100 ({score_data['risk_tier']} Risk). 7 live vectors scanned: News, CISA KEV, AbuseIPDB, Stock, SSL, DNS, IPinfo.",
         "HIGH" if score_data['overall_score'] >= 70 else ("MEDIUM" if score_data['overall_score'] >= 40 else "LOW"),
         f"https://{vendor.domain}",
         now
@@ -125,7 +135,12 @@ def add_vendor(vendor: VendorCreate):
         "sector": vendor.sector,
         "risk_tier": score_data["risk_tier"],
         "risk_score": score_data["overall_score"],
-        "message": f"Successfully onboarded {vendor.name} and calculated initial security risk score."
+        "breakdown_summary": {
+            "news": news_score,
+            "hibp": hibp_score,
+            "abuse_ip": abuse_score
+        },
+        "message": f"✅ {vendor.name} onboarded. Live risk score: {score_data['overall_score']}/100 ({score_data['risk_tier']})"
     }
 
 @app.get("/api/vendors/{vendor_id}")

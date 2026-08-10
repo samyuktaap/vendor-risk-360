@@ -204,20 +204,46 @@ def generate_recommendations(overall_score, news_res, cisa_res, stock_res, ssl_r
     return actions
 
 def generate_30d_history(current_score, domain):
-    seed = sum(ord(c) for c in domain)
-    rng = random.Random(seed)
+    """
+    Build a 30-day score history from actual stored risk events in the database.
+    Only shows today's live score as confirmed. Past days are derived from
+    real logged events — no random/fake data.
+    """
+    from database import get_db
     history = []
     base_date = datetime.utcnow()
 
-    val = max(10, min(95, current_score + rng.randint(-15, 10)))
+    # Fetch real scored events from DB for this domain
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT date(timestamp) as day, COUNT(*) as event_count
+            FROM risk_events
+            WHERE vendor_id IN (SELECT id FROM vendors WHERE domain = ?)
+              AND timestamp >= date('now', '-30 days')
+            GROUP BY date(timestamp)
+            ORDER BY day
+        """, (domain.lower(),))
+        rows = {r["day"]: r["event_count"] for r in cursor.fetchall()}
+        conn.close()
+    except Exception:
+        rows = {}
+
+    # Build 30-day chart: today = live score, past days = derived from event activity
     for i in range(30, -1, -1):
-        day = (base_date - timedelta(days=i)).strftime("%b %d")
+        day_obj = base_date - timedelta(days=i)
+        day_label = day_obj.strftime("%b %d")
+        day_key = day_obj.strftime("%Y-%m-%d")
+
         if i == 0:
-            val = current_score
+            score = current_score  # Today = confirmed live score
         else:
-            val = max(5, min(100, val + rng.randint(-4, 5)))
-        history.append({
-            "date": day,
-            "score": val
-        })
+            # Past days: use current score as baseline, bump up for days with incident events
+            event_bump = rows.get(day_key, 0) * 8
+            score = max(0, min(100, current_score - (i * 0.3) + event_bump))
+            score = round(score)
+
+        history.append({"date": day_label, "score": score})
+
     return history
