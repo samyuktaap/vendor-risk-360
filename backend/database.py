@@ -47,6 +47,22 @@ def init_db():
         )
     """)
 
+    # Manual Incidents Table (Inspired by reference repo feature)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            severity TEXT NOT NULL DEFAULT 'MEDIUM',
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            score_impact INTEGER DEFAULT 0,
+            reported_at TEXT NOT NULL,
+            resolved_at TEXT,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
+        )
+    """)
+
     # API Cache Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS cached_responses (

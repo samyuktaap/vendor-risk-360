@@ -21,7 +21,10 @@ import {
   Download,
   Mail,
   Activity,
-  Flame
+  Flame,
+  ClipboardList,
+  Plus,
+  CheckCheck
 } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import RiskScoreRing from './RiskScoreRing';
@@ -31,12 +34,19 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('actions');
+  const [incidents, setIncidents] = useState([]);
+  const [showIncidentForm, setShowIncidentForm] = useState(false);
+  const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'MEDIUM' });
+  const [loggingIncident, setLoggingIncident] = useState(false);
+  const [resolvingId, setResolvingId] = useState(null);
 
   useEffect(() => {
     if (vendorId) {
       fetchVendorDetail();
+      fetchIncidents();
     }
   }, [vendorId]);
+
 
   const fetchVendorDetail = async () => {
     setLoading(true);
@@ -52,6 +62,48 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
       setLoading(false);
     }
   };
+
+  const fetchIncidents = async () => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/incidents`);
+      if (res.ok) setIncidents(await res.json());
+    } catch (err) { console.error("Failed to fetch incidents:", err); }
+  };
+
+  const handleLogIncident = async () => {
+    if (!incidentForm.title.trim()) return;
+    setLoggingIncident(true);
+    try {
+      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/incidents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(incidentForm)
+      });
+      if (res.ok) {
+        setShowIncidentForm(false);
+        setIncidentForm({ title: '', description: '', severity: 'MEDIUM' });
+        await fetchIncidents();
+        await fetchVendorDetail();
+        if (onRefreshVendor) onRefreshVendor();
+      }
+    } catch (err) { console.error("Incident log failed:", err); }
+    finally { setLoggingIncident(false); }
+  };
+
+  const handleResolveIncident = async (incidentId) => {
+    setResolvingId(incidentId);
+    try {
+      const res = await fetch(`http://localhost:8000/api/incidents/${incidentId}/resolve`, { method: 'POST' });
+      if (res.ok) {
+        await fetchIncidents();
+        await fetchVendorDetail();
+        if (onRefreshVendor) onRefreshVendor();
+      }
+    } catch (err) { console.error("Resolve failed:", err); }
+    finally { setResolvingId(null); }
+  };
+
+
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -345,7 +397,109 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
               >
                 Live Google News ({breakdown?.news?.articles?.length ?? 0})
               </button>
+              <button
+                onClick={() => { setActiveTab('incidents'); fetchIncidents(); }}
+                className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
+                  activeTab === 'incidents'
+                    ? 'border-amber-400 text-amber-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                Incident Log ({incidents.length})
+              </button>
             </div>
+
+            {/* TAB CONTENT: INCIDENT LOG */}
+            {activeTab === 'incidents' && (
+              <div className="space-y-3">
+                {/* Log New Incident Button */}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-400">Manually log security incidents. Score auto-adjusts based on severity.</p>
+                  <button
+                    onClick={() => setShowIncidentForm(!showIncidentForm)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 text-xs font-semibold transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Log Incident
+                  </button>
+                </div>
+
+                {/* Incident Form */}
+                {showIncidentForm && (
+                  <div className="p-4 rounded-xl bg-slate-900/90 border border-amber-500/30 space-y-3">
+                    <h4 className="text-xs font-bold text-amber-300">New Security Incident</h4>
+                    <input
+                      type="text"
+                      placeholder="Incident Title (e.g. Ransomware Detected)"
+                      value={incidentForm.title}
+                      onChange={e => setIncidentForm({...incidentForm, title: e.target.value})}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500"
+                    />
+                    <textarea
+                      placeholder="Description (optional)"
+                      value={incidentForm.description}
+                      onChange={e => setIncidentForm({...incidentForm, description: e.target.value})}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500 h-16 resize-none"
+                    />
+                    <div className="flex gap-2 items-center">
+                      <select
+                        value={incidentForm.severity}
+                        onChange={e => setIncidentForm({...incidentForm, severity: e.target.value})}
+                        className="bg-slate-800 border border-slate-700 text-slate-100 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500"
+                      >
+                        <option value="LOW">LOW (+5 pts)</option>
+                        <option value="MEDIUM">MEDIUM (+15 pts)</option>
+                        <option value="HIGH">HIGH (+30 pts)</option>
+                        <option value="CRITICAL">CRITICAL (+50 pts)</option>
+                      </select>
+                      <button
+                        onClick={handleLogIncident}
+                        disabled={loggingIncident || !incidentForm.title.trim()}
+                        className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-bold transition-all disabled:opacity-50"
+                      >
+                        {loggingIncident ? 'Logging...' : 'Submit Incident'}
+                      </button>
+                      <button onClick={() => setShowIncidentForm(false)} className="px-3 py-2 rounded-xl bg-slate-800 text-slate-400 text-xs hover:bg-slate-700">Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Incident History */}
+                {incidents.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500 text-xs">No incidents logged for this vendor yet.</div>
+                ) : incidents.map((inc) => (
+                  <div key={inc.id} className={`p-4 rounded-xl border text-xs flex items-start justify-between gap-3 ${inc.status === 'RESOLVED' ? 'bg-slate-900/40 border-slate-800 opacity-60' : 'bg-slate-900/80 border-slate-700'}`}>
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                          inc.severity === 'CRITICAL' ? 'bg-rose-500/20 text-rose-300' :
+                          inc.severity === 'HIGH' ? 'bg-amber-500/20 text-amber-300' :
+                          inc.severity === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-300' :
+                          'bg-slate-700 text-slate-300'
+                        }`}>{inc.severity}</span>
+                        <span className="font-semibold text-slate-100">{inc.title}</span>
+                        {inc.status === 'RESOLVED' && <span className="text-[10px] text-emerald-400 font-bold">✓ RESOLVED</span>}
+                      </div>
+                      {inc.description && <p className="text-slate-400">{inc.description}</p>}
+                      <div className="text-[10px] text-slate-500">
+                        Score impact: +{inc.score_impact} pts • Reported: {new Date(inc.reported_at).toLocaleDateString()}
+                        {inc.resolved_at && ` • Resolved: ${new Date(inc.resolved_at).toLocaleDateString()}`}
+                      </div>
+                    </div>
+                    {inc.status === 'OPEN' && (
+                      <button
+                        onClick={() => handleResolveIncident(inc.id)}
+                        disabled={resolvingId === inc.id}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold hover:bg-emerald-500/20 transition-all disabled:opacity-50"
+                      >
+                        <CheckCheck className="w-3.5 h-3.5" />
+                        {resolvingId === inc.id ? '...' : 'Resolve'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* TAB CONTENT: RECOMMENDED ACTIONS */}
             {activeTab === 'actions' && (
