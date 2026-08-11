@@ -22,7 +22,7 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criti
     { id: 'compliance', label: 'Compliance Manager', icon: Award },
     { id: 'remediation', label: 'Remediation Tasks', icon: CheckSquare },
     { id: 'documents', label: 'Document Manager', icon: FileText },
-    { id: 'analytics', label: 'Analytics Hub', icon: BarChart3 },
+    // { id: 'analytics', label: 'Analytics Hub', icon: BarChart3 },
     { id: 'contagion', label: 'Risk Contagion Map', icon: Network, badge: criticalCount > 0 ? `${criticalCount} Critical` : null },
     { id: 'vendors', label: 'Monitored Vendors', icon: Building2 },
     { id: 'feed', label: 'Live Activity Stream', icon: Activity },

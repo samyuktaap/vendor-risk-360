@@ -11,7 +11,7 @@ import AddVendorModal from './components/AddVendorModal';
 import IncidentManager from './components/IncidentManager';
 import ComplianceManager from './components/ComplianceManager';
 import RemediationManager from './components/RemediationManager';
-import AnalyticsHub from './components/AnalyticsHub';
+// import AnalyticsHub from './components/AnalyticsHub';
 import DocumentManager from './components/DocumentManager';
 
 const API_BASE = 'http://localhost:8000';
@@ -126,11 +126,11 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'analytics' && (
+              {/* {activeTab === 'analytics' && (
                 <AnalyticsHub
                   vendors={vendors}
                 />
-              )}
+              )} */}
 
               {activeTab === 'documents' && (
                 <DocumentManager
