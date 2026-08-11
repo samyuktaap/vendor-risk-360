@@ -2,28 +2,23 @@ import React, { useState } from 'react';
 import { 
   Building2, 
   ShieldAlert, 
-  Activity, 
   TrendingUp, 
   Layers, 
   RefreshCw, 
-  ExternalLink, 
-  ChevronRight,
-  Filter,
-  Search,
-  CheckCircle2,
-  AlertOctagon,
-  Trash2,
-  TrendingDown,
-  Flame
+  ChevronRight, 
+  Search, 
+  Trash2, 
+  Flame, 
+  ArrowUpRight,
+  Plus
 } from 'lucide-react';
-import RiskScoreRing from './RiskScoreRing';
 
 export default function OverviewDashboard({ 
   vendors = [], 
   feed = [], 
   onSelectVendor, 
   onOpenAddModal, 
-  onRefreshVendor,
+  onRefreshVendor, 
   onDeleteVendor,
   onNavigateToContagion
 }) {
@@ -31,7 +26,6 @@ export default function OverviewDashboard({
   const [searchFilter, setSearchFilter] = useState('');
   const [refreshingId, setRefreshingId] = useState(null);
 
-  // Compute Metrics
   const totalCount = vendors.length;
   const criticalVendors = vendors.filter(v => v.risk_score >= 70);
   const watchVendors = vendors.filter(v => v.risk_score >= 40 && v.risk_score < 70);
@@ -41,7 +35,6 @@ export default function OverviewDashboard({
     ? Math.round(vendors.reduce((acc, v) => acc + v.risk_score, 0) / totalCount) 
     : 0;
 
-  // Filter vendors list
   const filteredVendors = vendors.filter(v => {
     const matchesRisk = 
       filterRisk === 'ALL' ? true :
@@ -52,7 +45,7 @@ export default function OverviewDashboard({
     const matchesSearch = 
       v.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
       v.domain.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      v.sector.toLowerCase().includes(searchFilter.toLowerCase());
+      (v.sector && v.sector.toLowerCase().includes(searchFilter.toLowerCase()));
 
     return matchesRisk && matchesSearch;
   });
@@ -61,133 +54,143 @@ export default function OverviewDashboard({
     e.stopPropagation();
     setRefreshingId(vendorId);
     try {
-      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/refresh`, { method: 'POST' });
+      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/refresh`, {
+        method: 'POST'
+      });
       if (res.ok && onRefreshVendor) {
         onRefreshVendor();
-      } else {
-        alert("Unable to refresh vendor risk score at this time.");
       }
     } catch (err) {
-      console.error(err);
-      alert("Network error: Unable to reach security risk engine.");
+      console.error("Error refreshing vendor:", err);
     } finally {
       setRefreshingId(null);
     }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Metrics Grid */}
+    <div className="space-y-6 pb-12">
+      {/* Overview Stat Cards Header */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Metric 1: Monitored Vendors */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg backdrop-blur-md relative overflow-hidden group">
+        {/* Total Monitored Vendors */}
+        <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-emerald-950/20 group hover:border-emerald-500/30 transition-all duration-300">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Monitored Vendors
-            </span>
-            <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Monitored Portfolio</span>
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[#00f090]">
               <Building2 className="w-5 h-5" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-100">{totalCount}</span>
-            <span className="text-xs text-slate-400">Active Supply Chain</span>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-black text-slate-100 font-mono tracking-tight">{totalCount}</span>
+            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-0.5">
+              <ArrowUpRight className="w-3.5 h-3.5 text-[#00f090]" /> Active
+            </span>
           </div>
-          <div className="mt-2 text-[11px] text-slate-500">
-            {safeVendors.length} Low Risk &bull; {watchVendors.length} Watch &bull; {criticalVendors.length} Critical
+          <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
+            <span className="text-emerald-400 font-semibold">{safeVendors.length} Safe</span>
+            <span>•</span>
+            <span className="text-amber-400 font-semibold">{watchVendors.length} Watch</span>
+            <span>•</span>
+            <span className="text-rose-400 font-semibold">{criticalVendors.length} Critical</span>
           </div>
         </div>
 
-        {/* Metric 2: Critical Risk Alerts */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg backdrop-blur-md relative overflow-hidden group">
+        {/* Critical Risk Vendors */}
+        <div className="bg-[#0a0f1d] border border-rose-950/40 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-rose-950/20 group hover:border-rose-500/30 transition-all duration-300">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Critical Risk Alerts
-            </span>
-            <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Critical Risk Vendors</span>
+            <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
               <ShieldAlert className="w-5 h-5" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-rose-400">{criticalVendors.length}</span>
-            <span className="text-xs font-bold text-rose-400/80 uppercase tracking-wide">
-              {criticalVendors.length > 0 ? 'Requires Immediate Action' : 'All Clear'}
-            </span>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-black text-rose-400 font-mono tracking-tight">{criticalVendors.length}</span>
+            <span className="text-xs text-rose-400 font-semibold">Immediate Action</span>
           </div>
-          <div className="mt-2 text-[11px] text-slate-500 truncate">
-            Score &ge; 70 hazard threshold
+          <div className="mt-2 text-[11px] text-slate-400 truncate">
+            {criticalVendors.length > 0 ? `${criticalVendors[0].name} requires remediation` : 'No critical risk vendors detected'}
           </div>
         </div>
 
-        {/* Metric 3: Network Risk Index */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg backdrop-blur-md relative overflow-hidden group">
+        {/* Average Security Risk Score */}
+        <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-emerald-950/20 group hover:border-emerald-500/30 transition-all duration-300">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              5-Vector Risk Index
-            </span>
-            <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Portfolio Risk Average</span>
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[#00f090]">
               <TrendingUp className="w-5 h-5" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-100">{avgScore}</span>
-            <span className="text-xs text-slate-400">/ 100 Risk Score</span>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-black text-slate-100 font-mono tracking-tight">{avgScore}</span>
+            <span className="text-xs text-slate-400 font-mono">/ 100 max</span>
           </div>
-          <div className="mt-2 text-[11px] text-slate-500">
-            News, Breaches, Sanctions, Stocks & SSL
+          <div className="mt-2 text-[11px] text-slate-400">
+            Weighted composite risk score across all vendors
           </div>
         </div>
 
-        {/* Metric 4: Risk Contagion Quick Action */}
+        {/* Risk Contagion Quick Launcher */}
         <div 
           onClick={onNavigateToContagion}
-          className="bg-gradient-to-br from-slate-900 to-slate-950 border border-cyan-500/30 rounded-2xl p-5 shadow-lg backdrop-blur-md cursor-pointer hover:border-cyan-400 transition-all duration-300 group flex flex-col justify-between"
+          className="bg-gradient-to-br from-[#0a0f1d] to-[#0d162a] border border-emerald-500/30 hover:border-emerald-500/60 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-emerald-950/40 cursor-pointer group transition-all duration-300"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
-              <Layers className="w-4 h-4" />
-              Contagion Map
+            <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Layers className="w-4 h-4 text-[#00f090]" /> Supply Chain Graph
             </span>
-            <ChevronRight className="w-4 h-4 text-cyan-400 group-hover:translate-x-1 transition-transform" />
+            <ChevronRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-1 transition-transform" />
           </div>
-          <div>
-            <div className="text-sm font-bold text-slate-100 mt-2">View Topology Network</div>
-            <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">
-              Visualize central HQ contagion vectors & red alert hazard nodes.
+          <div className="mt-3">
+            <div className="text-sm font-bold text-slate-100 group-hover:text-[#00f090] transition-colors">
+              Risk Contagion Topology Map
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Visualize cascade vulnerability pathways and critical vendor dependencies.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Main Vendor Risk Matrix Table */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-        {/* Table Header & Controls */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 mb-4 border-b border-slate-800 gap-4">
+      {/* Main Vendor Inventory & Risk Assessment Table */}
+      <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl shadow-xl overflow-hidden">
+        {/* Table Header Bar */}
+        <div className="p-5 border-b border-emerald-950/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-cyan-400" />
-              Multi-Vector Vendor Risk Matrix
-            </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Continuously evaluated across HIBP breaches, NewsAPI, OpenSanctions, Stock Market volatility, and SSL posture.
-            </p>
+            <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+              Enterprise Monitored Vendors
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/10 text-[#00f090] border border-emerald-500/20">
+                {filteredVendors.length} Assets
+              </span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">Automated multi-probe threat monitoring and risk calculation</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Risk Tier Filters */}
-            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+            {/* Search Filter Box */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Filter vendor list..."
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                className="bg-[#070a12] border border-emerald-900/30 focus:border-[#00f090]/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none transition-all w-48"
+              />
+            </div>
+
+            {/* Risk Tier Tabs */}
+            <div className="flex items-center bg-[#070a12] p-1 rounded-xl border border-emerald-900/30 text-xs">
               {[
-                { id: 'ALL', label: 'All' },
-                { id: 'CRITICAL', label: 'Critical (≥70)' },
-                { id: 'WATCH', label: 'Watch (40-69)' },
-                { id: 'LOW', label: 'Low (<40)' },
-              ].map((tab) => (
+                { key: 'ALL', label: 'All Vendors' },
+                { key: 'CRITICAL', label: 'Critical Risk (70+)' },
+                { key: 'WATCH', label: 'Watch (40-69)' },
+                { key: 'SAFE', label: 'Safe (<40)' }
+              ].map(tab => (
                 <button
-                  key={tab.id}
-                  onClick={() => setFilterRisk(tab.id)}
-                  className={`px-3 py-1 rounded-lg transition-all ${
-                    filterRisk === tab.id
-                      ? 'bg-slate-800 text-cyan-300 shadow-sm'
+                  key={tab.key}
+                  onClick={() => setFilterRisk(tab.key)}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all text-xs ${
+                    filterRisk === tab.key
+                      ? 'bg-emerald-500/20 text-[#00f090] border border-emerald-500/30 shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
@@ -202,16 +205,16 @@ export default function OverviewDashboard({
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider font-semibold">
-                <th className="py-3 px-4">Vendor & Domain</th>
-                <th className="py-3 px-4">Industry Sector</th>
-                <th className="py-3 px-4 text-center">Security Risk Score</th>
-                <th className="py-3 px-4">5-Vector Breakdown (News / HIBP / Sanc / Stock / SSL)</th>
-                <th className="py-3 px-4">Risk Classification</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+              <tr className="border-b border-emerald-950/40 text-slate-400 uppercase text-[10px] tracking-wider font-semibold bg-[#070a12]/60">
+                <th className="py-3.5 px-4">Vendor &amp; Domain</th>
+                <th className="py-3.5 px-4">Industry Sector</th>
+                <th className="py-3.5 px-4 text-center">Security Risk Score</th>
+                <th className="py-3.5 px-4">Multi-Vector Probes</th>
+                <th className="py-3.5 px-4">Risk Tier</th>
+                <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-emerald-950/30">
               {filteredVendors.length === 0 ? (
                 <tr>
                   <td colSpan="6" className="py-12 text-center text-slate-400">
@@ -229,7 +232,7 @@ export default function OverviewDashboard({
                     <tr
                       key={vendor.id}
                       onClick={() => onSelectVendor(vendor.id)}
-                      className="hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                      className="hover:bg-slate-800/40 cursor-pointer transition-colors group"
                     >
                       {/* Vendor Name & Domain */}
                       <td className="py-4 px-4">
@@ -237,12 +240,12 @@ export default function OverviewDashboard({
                           <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm text-slate-100 ${
                             isCritical ? 'bg-rose-950/80 border border-rose-500/40 text-rose-300' :
                             isWatch ? 'bg-amber-950/80 border border-amber-500/40 text-amber-300' :
-                            'bg-slate-800 border border-slate-700 text-cyan-300'
+                            'bg-emerald-950/80 border border-emerald-500/40 text-[#00f090]'
                           }`}>
                             {vendor.name.charAt(0)}
                           </div>
                           <div>
-                            <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors flex items-center gap-2">
+                            <div className="font-bold text-slate-100 group-hover:text-[#00f090] transition-colors flex items-center gap-2">
                               {vendor.name}
                               {hasCriticalIncident && (
                                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse" title="Active Critical Incident">
@@ -259,7 +262,7 @@ export default function OverviewDashboard({
 
                       {/* Sector */}
                       <td className="py-4 px-4">
-                        <span className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700/60 text-slate-300 font-medium text-[11px]">
+                        <span className="px-2.5 py-1 rounded-lg bg-[#070a12] border border-emerald-900/30 text-slate-300 font-medium text-[11px]">
                           {vendor.sector}
                         </span>
                       </td>
@@ -270,7 +273,7 @@ export default function OverviewDashboard({
                           <span className={`text-base font-black px-3 py-0.5 rounded-full font-mono ${
                             isCritical ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' :
                             isWatch ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' :
-                            'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                            'bg-emerald-500/20 text-[#00f090] border border-emerald-500/40'
                           }`}>
                             {vendor.risk_score}
                           </span>
@@ -286,15 +289,14 @@ export default function OverviewDashboard({
                       {/* Sub-score Pills */}
                       <td className="py-4 px-4">
                         <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
-                          <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
+                          <span className="px-2 py-0.5 rounded bg-[#070a12] border border-emerald-900/30 text-slate-300">
                             📰 News: {vendor.news_score}
                           </span>
-                          <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
-                            🛡️ HIBP: {vendor.hibp_score}
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
-                            ⚖️ Sanc: {vendor.sanctions_score}
-                          </span>
+                          {vendor.custom_ticker && (
+                            <span className="px-2 py-0.5 rounded bg-[#070a12] border border-emerald-500/30 text-[#00f090]">
+                              📈 Stock: ${vendor.custom_ticker}
+                            </span>
+                          )}
                         </div>
                       </td>
 
@@ -303,7 +305,7 @@ export default function OverviewDashboard({
                         <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wide border ${
                           isCritical ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' :
                           isWatch ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
-                          'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          'bg-emerald-500/20 text-[#00f090] border border-emerald-500/40'
                         }`}>
                           {vendor.risk_tier} RISK
                         </span>
@@ -316,9 +318,9 @@ export default function OverviewDashboard({
                             onClick={(e) => handleSingleRefresh(e, vendor.id)}
                             disabled={refreshingId === vendor.id}
                             title="Trigger Multi-API Refresh"
-                            className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-cyan-400 hover:border-cyan-500/50 transition-colors"
+                            className="p-1.5 rounded-lg bg-[#070a12] border border-emerald-900/30 text-slate-300 hover:text-[#00f090] hover:border-emerald-500/50 transition-colors"
                           >
-                            <RefreshCw className={`w-3.5 h-3.5 ${refreshingId === vendor.id ? 'animate-spin text-cyan-400' : ''}`} />
+                            <RefreshCw className={`w-3.5 h-3.5 ${refreshingId === vendor.id ? 'animate-spin text-[#00f090]' : ''}`} />
                           </button>
 
                           <button
@@ -327,7 +329,7 @@ export default function OverviewDashboard({
                               onDeleteVendor(vendor.id);
                             }}
                             title="Delete Vendor"
-                            className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-rose-400 hover:border-rose-500/50 transition-colors"
+                            className="p-1.5 rounded-lg bg-[#070a12] border border-emerald-900/30 text-slate-400 hover:text-rose-400 hover:border-rose-500/50 transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

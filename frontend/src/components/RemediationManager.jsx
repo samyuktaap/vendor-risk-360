@@ -117,15 +117,15 @@ export default function RemediationManager({ vendors }) {
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-emerald-950/20 to-slate-900 border border-slate-800 shadow-xl">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl glass-panel-liquid border border-white/[0.08] shadow-xl">
         <div>
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-              <CheckSquare className="w-3 h-3 text-emerald-400" /> REMEDIATION ENGINE
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#00C853]/20 text-[#00C853] border border-[#00C853]/30 flex items-center gap-1">
+              <CheckSquare className="w-3 h-3 text-[#00C853]" /> REMEDIATION ENGINE
             </span>
             <span className="text-xs text-slate-400">VendorAuditAI-Inspired Workflow</span>
           </div>
-          <h2 className="text-2xl font-bold text-slate-100 tracking-tight mt-1">Remediation Task Manager</h2>
+          <h2 className="text-2xl font-bold text-[#F8FAFC] tracking-tight mt-1">Remediation Task Manager</h2>
           <p className="text-xs text-slate-400 mt-1 max-w-2xl">
             Track and manage security remediation tasks with SLA tracking, priority handling, and automated task assignment from incidents and compliance gaps.
           </p>
@@ -133,7 +133,7 @@ export default function RemediationManager({ vendors }) {
 
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs py-3 px-5 rounded-xl shadow-lg shadow-emerald-950/50 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] self-start md:self-auto"
+          className="bg-gradient-to-r from-[#00C853] to-[#00D4AA] hover:from-[#00B848] hover:to-[#00C4A0] text-white font-semibold text-xs py-3 px-5 rounded-xl shadow-lg shadow-[#00C853]/20 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] self-start md:self-auto"
         >
           <Plus className="w-4 h-4 stroke-[2.5]" />
           <span>Create Remediation Task</span>
@@ -142,58 +142,58 @@ export default function RemediationManager({ vendors }) {
 
       {/* Overview Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Total Tasks</span>
-            <CheckSquare className="w-4 h-4 text-slate-400" />
+            <CheckSquare className="w-4 h-4 text-[#00C853]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-100">{totalTasks}</span>
-            <span className="text-[11px] text-slate-400">tracked</span>
+            <span className="text-2xl font-bold text-[#F8FAFC]">{totalTasks}</span>
+            <span className="text-[11px] text-slate-400">tasks</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400 font-medium">Open Tasks</span>
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span className="text-xs text-slate-400 font-medium">Open</span>
+            <AlertTriangle className="w-4 h-4 text-[#FFB800]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-amber-400">{openTasks}</span>
-            <span className="text-[11px] text-amber-400/80 font-medium">pending</span>
+            <span className="text-2xl font-bold text-[#FFB800]">{openTasks}</span>
+            <span className="text-[11px] text-[#FFB800]/80 font-medium">pending</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">In Progress</span>
-            <Clock className="w-4 h-4 text-cyan-400" />
+            <Clock className="w-4 h-4 text-[#0066FF]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-cyan-400">{inProgressTasks}</span>
-            <span className="text-[11px] text-cyan-400/80 font-medium">active</span>
+            <span className="text-2xl font-bold text-[#0066FF]">{inProgressTasks}</span>
+            <span className="text-[11px] text-[#0066FF]/80 font-medium">active</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Completed</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <CheckCircle2 className="w-4 h-4 text-[#00C853]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-emerald-400">{completedTasks}</span>
-            <span className="text-[11px] text-emerald-400 font-medium">resolved</span>
+            <span className="text-2xl font-bold text-[#00C853]">{completedTasks}</span>
+            <span className="text-[11px] text-[#00C853]/80 font-medium">resolved</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Overdue</span>
-            <AlertTriangle className="w-4 h-4 text-rose-400" />
+            <AlertTriangle className="w-4 h-4 text-[#E63946]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-rose-400">{overdueTasks}</span>
-            <span className="text-[11px] text-rose-400/80 font-medium">SLA breach</span>
+            <span className="text-2xl font-bold text-[#E63946]">{overdueTasks}</span>
+            <span className="text-[11px] text-[#E63946]/80 font-medium">SLA breach</span>
           </div>
         </div>
       </div>

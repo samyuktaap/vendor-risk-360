@@ -24,6 +24,10 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             domain TEXT UNIQUE NOT NULL,
+            email TEXT,
+            ip_address TEXT,
+            software TEXT,
+            country TEXT,
             sector TEXT NOT NULL,
             risk_tier TEXT DEFAULT 'Medium',
             risk_score INTEGER DEFAULT 0,
@@ -43,6 +47,10 @@ def init_db():
 
     # Column migrations for existing SQLite DB files
     for col_def in [
+        "email TEXT",
+        "ip_address TEXT",
+        "software TEXT",
+        "country TEXT",
         "abuse_score INTEGER DEFAULT 0",
         "criticality_tier TEXT DEFAULT 'Tier 2 - Business Operational'",
         "data_sensitivity TEXT DEFAULT 'Public Data'",

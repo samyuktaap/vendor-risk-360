@@ -11,7 +11,6 @@ import {
   Trash2,
   Eye,
   File,
-  FilePdf,
   FileCheck,
   XCircle,
   Filter
@@ -181,20 +180,20 @@ export default function DocumentManager({ vendors }) {
 
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'APPROVED': return <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
-      case 'ANALYZED': return <FileCheck className="w-4 h-4 text-cyan-400" />;
-      case 'PROCESSING': return <Clock className="w-4 h-4 text-amber-400 animate-spin" />;
-      case 'REJECTED': return <XCircle className="w-4 h-4 text-rose-400" />;
+      case 'APPROVED': return <CheckCircle2 className="w-4 h-4 text-[#00C853]" />;
+      case 'ANALYZED': return <FileCheck className="w-4 h-4 text-[#00D4AA]" />;
+      case 'PROCESSING': return <Clock className="w-4 h-4 text-[#FFB800] animate-spin" />;
+      case 'REJECTED': return <XCircle className="w-4 h-4 text-[#E63946]" />;
       default: return <File className="w-4 h-4 text-slate-400" />;
     }
   };
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'APPROVED': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
-      case 'ANALYZED': return 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30';
-      case 'PROCESSING': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
-      case 'REJECTED': return 'bg-rose-500/20 text-rose-400 border-rose-500/30';
+      case 'APPROVED': return 'bg-[#00C853]/20 text-[#00C853] border-[#00C853]/30';
+      case 'ANALYZED': return 'bg-[#00D4AA]/20 text-[#00D4AA] border-[#00D4AA]/30';
+      case 'PROCESSING': return 'bg-[#FFB800]/20 text-[#FFB800] border-[#FFB800]/30';
+      case 'REJECTED': return 'bg-[#E63946]/20 text-[#E63946] border-[#E63946]/30';
       default: return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
     }
   };
@@ -202,15 +201,15 @@ export default function DocumentManager({ vendors }) {
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-blue-950/20 to-slate-900 border border-slate-800 shadow-xl">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl glass-panel-liquid border border-white/[0.08] shadow-xl">
         <div>
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center gap-1">
-              <FileText className="w-3 h-3 text-blue-400" /> DOCUMENT ENGINE
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#0066FF]/20 text-[#0066FF] border border-[#0066FF]/30 flex items-center gap-1">
+              <FileText className="w-3 h-3 text-[#0066FF]" /> DOCUMENT ENGINE
             </span>
             <span className="text-xs text-slate-400">VendorAuditAI-Inspired Management</span>
           </div>
-          <h2 className="text-2xl font-bold text-slate-100 tracking-tight mt-1">Document Management Center</h2>
+          <h2 className="text-2xl font-bold text-[#F8FAFC] tracking-tight mt-1">Document Management Center</h2>
           <p className="text-xs text-slate-400 mt-1 max-w-2xl">
             Upload and process SOC 2 reports, ISO certifications, and security questionnaires with AI-powered semantic chunking and automatic classification.
           </p>
@@ -218,7 +217,7 @@ export default function DocumentManager({ vendors }) {
 
         <button
           onClick={() => setIsUploadModalOpen(true)}
-          className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-xs py-3 px-5 rounded-xl shadow-lg shadow-blue-950/50 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] self-start md:self-auto"
+          className="bg-gradient-to-r from-[#0066FF] to-[#00D4AA] hover:from-[#0056E6] hover:to-[#00C4A0] text-white font-semibold text-xs py-3 px-5 rounded-xl shadow-lg shadow-[#0066FF]/20 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] self-start md:self-auto"
         >
           <Upload className="w-4 h-4 stroke-[2.5]" />
           <span>Upload Document</span>
@@ -227,58 +226,58 @@ export default function DocumentManager({ vendors }) {
 
       {/* Overview Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Total Documents</span>
             <FileText className="w-4 h-4 text-slate-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-100">{documents.length}</span>
+            <span className="text-2xl font-bold text-[#F8FAFC]">{documents.length}</span>
             <span className="text-[11px] text-slate-400">uploaded</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Processing</span>
-            <Clock className="w-4 h-4 text-amber-400" />
+            <Clock className="w-4 h-4 text-[#FFB800]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-amber-400">{statusCounts.PROCESSING}</span>
-            <span className="text-[11px] text-amber-400/80 font-medium">in queue</span>
+            <span className="text-2xl font-bold text-[#FFB800]">{statusCounts.PROCESSING}</span>
+            <span className="text-[11px] text-[#FFB800]/80 font-medium">in queue</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Analyzed</span>
-            <FileCheck className="w-4 h-4 text-cyan-400" />
+            <FileCheck className="w-4 h-4 text-[#00D4AA]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-cyan-400">{statusCounts.ANALYZED}</span>
-            <span className="text-[11px] text-cyan-400/80 font-medium">processed</span>
+            <span className="text-2xl font-bold text-[#00D4AA]">{statusCounts.ANALYZED}</span>
+            <span className="text-[11px] text-[#00D4AA]/80 font-medium">processed</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Approved</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <CheckCircle2 className="w-4 h-4 text-[#00C853]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-emerald-400">{statusCounts.APPROVED}</span>
-            <span className="text-[11px] text-emerald-400 font-medium">verified</span>
+            <span className="text-2xl font-bold text-[#00C853]">{statusCounts.APPROVED}</span>
+            <span className="text-[11px] text-[#00C853]/80 font-medium">verified</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-md">
+        <div className="p-4 rounded-xl glass-card border border-white/[0.08] shadow-md card-hover-lift">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Rejected</span>
-            <XCircle className="w-4 h-4 text-rose-400" />
+            <XCircle className="w-4 h-4 text-[#E63946]" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-rose-400">{statusCounts.REJECTED}</span>
-            <span className="text-[11px] text-rose-400/80 font-medium">issues</span>
+            <span className="text-2xl font-bold text-[#E63946]">{statusCounts.REJECTED}</span>
+            <span className="text-[11px] text-[#E63946]/80 font-medium">issues</span>
           </div>
         </div>
       </div>
@@ -292,7 +291,7 @@ export default function DocumentManager({ vendors }) {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search documents by title, vendor, or filename..."
-            className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none"
+            className="w-full bg-black/20 border border-white/[0.08] focus:border-[#0066FF] rounded-xl pl-9 pr-4 py-2 text-xs text-[#F8FAFC] placeholder-slate-500 focus:outline-none focus:shadow-[0_0_20px_rgba(0,102,255,0.1)]"
           />
         </div>
 
@@ -300,7 +299,7 @@ export default function DocumentManager({ vendors }) {
           <select
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
-            className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:border-blue-500 focus:outline-none"
+            className="bg-black/20 border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-slate-300 focus:border-[#0066FF] focus:outline-none"
           >
             <option value="ALL">All Types</option>
             {DOCUMENT_TYPES.map(type => (
@@ -311,7 +310,7 @@ export default function DocumentManager({ vendors }) {
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-            className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:border-blue-500 focus:outline-none"
+            className="bg-black/20 border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-slate-300 focus:border-[#0066FF] focus:outline-none"
           >
             <option value="ALL">All Status</option>
             {DOCUMENT_STATUS.map(status => (
@@ -322,11 +321,11 @@ export default function DocumentManager({ vendors }) {
       </div>
 
       {/* Documents Table */}
-      <div className="rounded-xl bg-slate-900/70 border border-slate-800/80 overflow-hidden shadow-lg">
+      <div className="rounded-xl glass-panel border border-white/[0.08] overflow-hidden shadow-lg">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 font-semibold">
+              <tr className="border-b border-white/[0.08] bg-black/20 text-slate-400 font-semibold">
                 <th className="py-3 px-4">Document</th>
                 <th className="py-3 px-4">Vendor</th>
                 <th className="py-3 px-4">Type</th>
@@ -336,7 +335,7 @@ export default function DocumentManager({ vendors }) {
                 <th className="py-3 px-4">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-white/[0.05]">
               {filteredDocuments.length === 0 ? (
                 <tr>
                   <td colSpan="7" className="py-12 text-center text-slate-400 text-xs">
@@ -345,21 +344,21 @@ export default function DocumentManager({ vendors }) {
                   </td>
                 </tr>
               ) : filteredDocuments.map((doc) => (
-                <tr key={doc.id} className="hover:bg-slate-800/40 transition-colors">
+                <tr key={doc.id} className="hover:bg-white/[0.02] transition-colors">
                   <td className="py-3.5 px-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
-                        <FilePdf className="w-5 h-5 text-rose-400" />
+                      <div className="w-10 h-10 rounded-lg bg-black/20 border border-white/[0.08] flex items-center justify-center">
+                        <FileText className="w-5 h-5 text-[#0066FF]" />
                       </div>
                       <div>
-                        <div className="font-medium text-slate-200">{doc.title}</div>
+                        <div className="font-medium text-[#F8FAFC]">{doc.title}</div>
                         <div className="text-[10px] text-slate-500">{doc.file_name} • {doc.file_size}</div>
                       </div>
                     </div>
                   </td>
                   <td className="py-3.5 px-4 text-slate-300">{doc.vendor_name}</td>
                   <td className="py-3.5 px-4">
-                    <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] border border-slate-700">
+                    <span className="px-2 py-0.5 rounded-full bg-black/20 text-slate-300 text-[10px] border border-white/[0.08]">
                       {doc.document_type}
                     </span>
                   </td>
@@ -372,9 +371,9 @@ export default function DocumentManager({ vendors }) {
                   <td className="py-3.5 px-4">
                     {doc.compliance_score !== null ? (
                       <div className="flex items-center gap-2">
-                        <div className="w-12 h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div className="w-12 h-2 bg-black/30 rounded-full overflow-hidden">
                           <div 
-                            className={`h-full ${doc.compliance_score >= 80 ? 'bg-emerald-500' : doc.compliance_score >= 60 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                            className={`h-full ${doc.compliance_score >= 80 ? 'bg-[#00C853]' : doc.compliance_score >= 60 ? 'bg-[#FFB800]' : 'bg-[#E63946]'}`}
                             style={{ width: `${doc.compliance_score}%` }}
                           />
                         </div>
@@ -397,7 +396,7 @@ export default function DocumentManager({ vendors }) {
                       </button>
                       <button
                         onClick={() => handleDeleteDocument(doc.id)}
-                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 transition-colors"
+                        className="p-1.5 rounded-lg bg-black/20 hover:bg-black/30 text-slate-400 hover:text-[#E63946] transition-colors border border-white/[0.08]"
                         title="Delete"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -413,16 +412,16 @@ export default function DocumentManager({ vendors }) {
 
       {/* Upload Document Modal */}
       {isUploadModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-panel border border-white/[0.08] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
               <div className="flex items-center gap-2">
-                <Upload className="w-5 h-5 text-blue-500" />
-                <h3 className="text-base font-bold text-slate-100">Upload Compliance Document</h3>
+                <Upload className="w-5 h-5 text-[#0066FF]" />
+                <h3 className="text-base font-bold text-[#F8FAFC]">Upload Compliance Document</h3>
               </div>
               <button
                 onClick={() => setIsUploadModalOpen(false)}
-                className="text-slate-400 hover:text-slate-200 text-xs font-semibold"
+                className="text-slate-400 hover:text-[#F8FAFC] text-xs font-semibold"
               >
                 ✕
               </button>
@@ -434,7 +433,7 @@ export default function DocumentManager({ vendors }) {
                 <select
                   value={uploadForm.vendor_id}
                   onChange={(e) => setUploadForm({ ...uploadForm, vendor_id: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:border-blue-500 focus:outline-none"
+                  className="w-full bg-black/20 border border-white/[0.08] rounded-lg p-2.5 text-[#F8FAFC] focus:border-[#0066FF] focus:outline-none"
                   required
                 >
                   {vendors.map(v => (
@@ -450,7 +449,7 @@ export default function DocumentManager({ vendors }) {
                 <select
                   value={uploadForm.document_type}
                   onChange={(e) => setUploadForm({ ...uploadForm, document_type: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:border-blue-500 focus:outline-none"
+                  className="w-full bg-black/20 border border-white/[0.08] rounded-lg p-2.5 text-[#F8FAFC] focus:border-[#0066FF] focus:outline-none"
                   required
                 >
                   {DOCUMENT_TYPES.map(type => (
@@ -461,7 +460,7 @@ export default function DocumentManager({ vendors }) {
 
               <div>
                 <label className="block text-slate-300 font-medium mb-1">Document File *</label>
-                <div className="border-2 border-dashed border-slate-700 rounded-lg p-6 text-center hover:border-blue-500 transition-colors cursor-pointer">
+                <div className="border-2 border-dashed border-white/[0.12] rounded-lg p-6 text-center hover:border-[#0066FF] transition-colors cursor-pointer bg-black/10">
                   <input
                     type="file"
                     onChange={handleFileUpload}
@@ -472,7 +471,7 @@ export default function DocumentManager({ vendors }) {
                   />
                   <label htmlFor="file-upload" className="cursor-pointer">
                     {uploadForm.file ? (
-                      <div className="flex items-center justify-center gap-2 text-emerald-400">
+                      <div className="flex items-center justify-center gap-2 text-[#00C853]">
                         <FilePdf className="w-8 h-8" />
                         <span className="font-medium">{uploadForm.file.name}</span>
                       </div>
@@ -494,7 +493,7 @@ export default function DocumentManager({ vendors }) {
                   placeholder="Document title (optional)"
                   value={uploadForm.title}
                   onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                  className="w-full bg-black/20 border border-white/[0.08] rounded-lg p-2.5 text-[#F8FAFC] placeholder-slate-500 focus:border-[#0066FF] focus:outline-none"
                 />
               </div>
 
@@ -505,7 +504,7 @@ export default function DocumentManager({ vendors }) {
                   placeholder="Document description (optional)"
                   value={uploadForm.description}
                   onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none"
+                  className="w-full bg-black/20 border border-white/[0.08] rounded-lg p-2.5 text-[#F8FAFC] placeholder-slate-500 focus:border-[#0066FF] focus:outline-none resize-none"
                 />
               </div>
 
@@ -515,28 +514,28 @@ export default function DocumentManager({ vendors }) {
                     <span>Uploading...</span>
                     <span>{uploadProgress}%</span>
                   </div>
-                  <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div className="w-full h-2 bg-black/30 rounded-full overflow-hidden">
                     <div 
-                      className="h-full bg-blue-500 transition-all duration-300"
+                      className="h-full bg-[#0066FF] transition-all duration-300"
                       style={{ width: `${uploadProgress}%` }}
                     />
                   </div>
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/[0.08]">
                 <button
                   type="button"
                   onClick={() => setIsUploadModalOpen(false)}
                   disabled={uploading}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold disabled:opacity-50"
+                  className="px-4 py-2 bg-black/20 hover:bg-black/30 text-slate-300 rounded-xl text-xs font-semibold disabled:opacity-50 border border-white/[0.08]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={uploading || !uploadForm.file}
-                  className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-xl text-xs shadow-lg shadow-blue-950/40 flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-5 py-2 bg-gradient-to-r from-[#0066FF] to-[#00D4AA] hover:from-[#0056E6] hover:to-[#00C4A0] text-white font-semibold rounded-xl text-xs shadow-lg shadow-[#0066FF]/20 flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {uploading ? 'Uploading...' : 'Upload Document'}
                 </button>

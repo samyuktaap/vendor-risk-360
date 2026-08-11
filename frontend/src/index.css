@@ -8,30 +8,39 @@
 
 body {
   margin: 0;
-  background-color: #0b0f17;
+  background-color: #070a12;
   color: #f1f5f9;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Custom Scrollbars */
+/* Custom Radiant Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: #090e1a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #1e293b;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #00f090;
+}
+
+/* Radiant glow effects */
+.glow-emerald {
+  box-shadow: 0 0 25px rgba(0, 240, 144, 0.25);
+}
+
+.glow-emerald-sm {
+  box-shadow: 0 0 12px rgba(0, 240, 144, 0.15);
 }
 
 /* Pulse animation keyframes for high risk nodes */

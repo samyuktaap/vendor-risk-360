@@ -502,6 +502,43 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
               >
                 Live Google News ({breakdown?.news?.articles?.length ?? 0})
               </button>
+
+              {breakdown?.virustotal && (
+                <button
+                  onClick={() => setActiveTab('vt')}
+                  className={`pb-2 transition-colors border-b-2 ${
+                    activeTab === 'vt'
+                      ? 'border-cyan-400 text-cyan-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  VirusTotal ({breakdown.virustotal.malicious_detections || 0})
+                </button>
+              )}
+              {breakdown?.nvd && (
+                <button
+                  onClick={() => setActiveTab('nvd')}
+                  className={`pb-2 transition-colors border-b-2 ${
+                    activeTab === 'nvd'
+                      ? 'border-cyan-400 text-cyan-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  NVD CVEs ({breakdown.nvd.cve_count || 0})
+                </button>
+              )}
+              {breakdown?.xposedornot && (
+                <button
+                  onClick={() => setActiveTab('xposed')}
+                  className={`pb-2 transition-colors border-b-2 ${
+                    activeTab === 'xposed'
+                      ? 'border-cyan-400 text-cyan-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  XposedOrNot ({breakdown.xposedornot.number_of_breaches || 0})
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('ai')}
                 className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
@@ -920,6 +957,56 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                     <div className="font-bold text-slate-200">{art.title}</div>
                     <p className="text-slate-400">{art.snippet}</p>
                   </a>
+                ))}
+              </div>
+            )}
+
+            {/* TAB CONTENT: VIRUSTOTAL */}
+            {activeTab === 'vt' && breakdown?.virustotal && (
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">VirusTotal Domain & IP Reputation</span>
+                  <span className={`px-2 py-0.5 rounded font-bold ${breakdown.virustotal.malicious_detections > 0 ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                    {breakdown.virustotal.status || 'Available'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-800">
+                  <div>Malicious Detections: <span className="font-bold text-rose-400">{breakdown.virustotal.malicious_detections || 0}</span></div>
+                  <div>Suspicious Detections: <span className="font-bold text-amber-400">{breakdown.virustotal.suspicious_detections || 0}</span></div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: NVD CVES */}
+            {activeTab === 'nvd' && breakdown?.nvd && (
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">NVD Vulnerabilities ({breakdown.nvd.cve_count || 0})</span>
+                  <span className="px-2 py-0.5 rounded font-bold bg-slate-800 text-cyan-300">
+                    {breakdown.nvd.status || 'Available'}
+                  </span>
+                </div>
+                {breakdown.nvd.cves?.map((cve, idx) => (
+                  <div key={idx} className="p-2.5 rounded bg-slate-800/60 border border-slate-700/60">
+                    <div className="font-bold text-rose-300">{cve.cve_id} (CVSS {cve.cvss_score})</div>
+                    <div className="text-[11px] text-slate-300 mt-1">{cve.description}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* TAB CONTENT: XPOSEDORNOT */}
+            {activeTab === 'xposed' && breakdown?.xposedornot && (
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">XposedOrNot Breach Check</span>
+                  <span className={`px-2 py-0.5 rounded font-bold ${breakdown.xposedornot.breach_status === 'Clean' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                    {breakdown.xposedornot.breach_status || 'Clean'}
+                  </span>
+                </div>
+                <div>Number of Breaches: <span className="font-bold text-slate-100">{breakdown.xposedornot.number_of_breaches || 0}</span></div>
+                {breakdown.xposedornot.breach_names?.map((b, i) => (
+                  <div key={i} className="text-slate-300">• {b}</div>
                 ))}
               </div>
             )}

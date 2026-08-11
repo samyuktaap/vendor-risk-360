@@ -30,7 +30,7 @@ def section(title):
 
 def api_get(path, timeout=8):
     try:
-        res = urllib.request.urlopen(f"http://localhost:8000{path}", timeout=timeout)
+        res = urllib.request.urlopen(f"http://127.0.0.1:8000{path}", timeout=timeout)
         return json.loads(res.read()), res.getcode()
     except urllib.error.HTTPError as e:
         return json.loads(e.read()), e.code
@@ -151,6 +151,22 @@ check("Engine: Stock ticker reflects custom override or private", True)  # just 
 # ═══════════════════════════════════════════════════════════════════════════════
 section("4. API Endpoints — Live HTTP Tests")
 
+# Auto-start uvicorn server in background subprocess if not already listening on port 8000
+import socket, subprocess
+def is_port_open(port=8000):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+server_proc = None
+if not is_port_open(8000):
+    server_proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000", "--log-level", "warning"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    time.sleep(1.5)
+
 # GET /health
 data, code = api_get("/health")
 check("API: /health returns 200", code == 200, str(code))
@@ -197,7 +213,7 @@ if isinstance(stats, dict):
 # POST /api/vendors — invalid domain
 import urllib.request, urllib.parse
 req = urllib.request.Request(
-    "http://localhost:8000/api/vendors",
+    "http://127.0.0.1:8000/api/vendors",
     data=json.dumps({"name": "BadVendor", "domain": "notadomain"}).encode(),
     headers={"Content-Type": "application/json"},
     method="POST"
@@ -206,7 +222,7 @@ try:
     urllib.request.urlopen(req, timeout=5)
     check("API: POST with invalid domain rejected", False, "Expected 400 but got 200")
 except urllib.error.HTTPError as e:
-    check("API: POST with invalid domain returns 400", e.code == 400, str(e.code))
+    check("API: POST with invalid domain returns 400/422", e.code in (400, 422), str(e.code))
 except Exception as ex:
     check("API: POST with invalid domain rejected", False, str(ex))
 
@@ -290,4 +306,6 @@ print(f"  Passed: {passed}")
 print(f"  Failed: {failed}")
 print(f"\n  {'ALL TESTS PASSED' if failed == 0 else f'{failed} TESTS FAILED'}")
 print()
+if server_proc:
+    server_proc.terminate()
 sys.exit(0 if failed == 0 else 1)

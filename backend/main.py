@@ -15,6 +15,7 @@ from database import (
 )
 from seed_data import seed_database
 from services.risk_engine import compute_vendor_risk_score
+from services.mlRiskService import calculate_shap_vendor_risk
 
 app = FastAPI(title="VendorRisk 360 API", version="1.0.0")
 
@@ -151,9 +152,17 @@ def add_vendor(vendor: VendorCreate):
         conn.close()
         raise HTTPException(status_code=400, detail=f"Vendor with domain '{domain_clean}' already exists.")
 
-    # Compute 100% live risk score across all 7 vectors
+    # Compute 100% live risk score across all vectors
     try:
-        score_data = compute_vendor_risk_score(domain_clean, vendor.name, custom_ticker=vendor.custom_ticker)
+        score_data = compute_vendor_risk_score(
+            domain=domain_clean, 
+            vendor_name=vendor.name, 
+            email=getattr(vendor, 'email', None),
+            ip_address=getattr(vendor, 'ip_address', None),
+            software=getattr(vendor, 'software', None),
+            country=getattr(vendor, 'country', None),
+            custom_ticker=vendor.custom_ticker
+        )
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=f"Live risk scoring failed: {str(e)}")
@@ -238,7 +247,16 @@ def get_vendor_detail(vendor_id: int):
         raise HTTPException(status_code=404, detail="Vendor not found.")
 
     v = dict(row)
-    score_data = compute_vendor_risk_score(v["domain"], v["name"], custom_ticker=v.get("custom_ticker"), vendor_id=vendor_id)
+    score_data = compute_vendor_risk_score(
+        domain=v["domain"], 
+        vendor_name=v["name"], 
+        email=v.get("email"),
+        ip_address=v.get("ip_address"),
+        software=v.get("software"),
+        country=v.get("country"),
+        custom_ticker=v.get("custom_ticker"), 
+        vendor_id=vendor_id
+    )
 
     return {
         "vendor": v,
@@ -258,7 +276,16 @@ def refresh_vendor_risk(vendor_id: int):
         raise HTTPException(status_code=404, detail="Vendor not found.")
 
     v = dict(row)
-    score_data = compute_vendor_risk_score(v["domain"], v["name"], custom_ticker=v.get("custom_ticker"), vendor_id=vendor_id)
+    score_data = compute_vendor_risk_score(
+        domain=v["domain"], 
+        vendor_name=v["name"], 
+        email=v.get("email"),
+        ip_address=v.get("ip_address"),
+        software=v.get("software"),
+        country=v.get("country"),
+        custom_ticker=v.get("custom_ticker"), 
+        vendor_id=vendor_id
+    )
     breakdown = score_data.get("breakdown", {})
     now = datetime.utcnow().isoformat()
 
@@ -692,4 +719,8 @@ def get_remediation_stats():
     """Get overall remediation task statistics."""
     summary = get_remediation_summary()
     return {"summary": summary}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 

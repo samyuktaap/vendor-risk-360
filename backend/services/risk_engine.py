@@ -22,7 +22,11 @@ WEIGHT_IPINFO = 0.05     # 5%  IPinfo Network Intelligence (Hosting Country Risk
 from services.ai_summary_engine import generate_ai_executive_summary
 from concurrent.futures import ThreadPoolExecutor
 
-def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str = None, vendor_id: int = None):
+from services.virusTotalService import check_virustotal
+from services.nvdService import check_nvd_vulnerabilities
+from services.xposedOrNotService import check_xposedornot
+
+def compute_vendor_risk_score(domain: str, vendor_name: str, email: str = None, ip_address: str = None, software: str = None, country: str = None, custom_ticker: str = None, vendor_id: int = None):
     # Lookup vendor_id by domain if not provided directly
     from database import get_db, get_vendor_incident_score_impact
     if not vendor_id:
@@ -40,7 +44,7 @@ def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str 
     incident_impact_data = get_vendor_incident_score_impact(vendor_id) if vendor_id else {"total_impact": 0, "total_incidents": 0, "active_incidents": 0, "critical_active": 0}
     incident_score_penalty = incident_impact_data.get("total_impact", 0)
 
-    # Execute all 9 live probes concurrently to reduce scoring latency to <3 seconds
+    # Execute all live probes concurrently to reduce scoring latency to <3 seconds
     def safe_run(func, *args):
         try:
             res = func(*args)
@@ -49,7 +53,7 @@ def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str 
             print(f"[Vector Probe Exception in {func.__name__}] {e}")
             return {}
 
-    with ThreadPoolExecutor(max_workers=9) as executor:
+    with ThreadPoolExecutor(max_workers=12) as executor:
         f_news = executor.submit(safe_run, fetch_vendor_news, vendor_name, domain)
         f_cisa = executor.submit(safe_run, fetch_cisa_exploited_vulnerabilities, vendor_name, domain)
         f_stock = executor.submit(safe_run, fetch_vendor_stock_risk, domain, vendor_name, custom_ticker)
@@ -59,6 +63,10 @@ def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str 
         f_sanctions = executor.submit(safe_run, check_vendor_sanctions, vendor_name)
         f_ipinfo = executor.submit(safe_run, probe_ip_intelligence, domain, vendor_name)
         f_abuse = executor.submit(safe_run, check_ip_abuse_reputation, domain, vendor_name)
+        
+        f_vt = executor.submit(safe_run, check_virustotal, domain, ip_address)
+        f_nvd = executor.submit(safe_run, check_nvd_vulnerabilities, software)
+        f_xposed = executor.submit(safe_run, check_xposedornot, email)
 
         news_res = f_news.result()
         cisa_res = f_cisa.result()
@@ -69,6 +77,10 @@ def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str 
         sanctions_res = f_sanctions.result()
         ipinfo_res = f_ipinfo.result()
         abuse_res = f_abuse.result()
+        
+        vt_res = f_vt.result()
+        nvd_res = f_nvd.result()
+        xposed_res = f_xposed.result()
 
     news_score = news_res.get("news_score", 0)
     cisa_score = cisa_res.get("cisa_score", 0)
@@ -124,7 +136,10 @@ def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str 
         "hibp": hibp_res,
         "sanctions": sanctions_res,
         "ipinfo": ipinfo_res,
-        "abuseipdb": abuse_res
+        "abuseipdb": abuse_res,
+        "virustotal": vt_res,
+        "nvd": nvd_res,
+        "xposedornot": xposed_res
     }
     ai_briefing = generate_ai_executive_summary(final_score, breakdown_dict, vendor_name)
 
@@ -197,7 +212,10 @@ def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str 
                 "last_reported": abuse_res.get("last_reported"),
                 "risk_flags": abuse_res.get("risk_flags", []),
                 "source": abuse_res.get("source", "")
-            }
+            },
+            "virustotal": vt_res,
+            "nvd": nvd_res,
+            "xposedornot": xposed_res
         },
         "recommended_actions": recommendations,
         "history_30d": history_trend,

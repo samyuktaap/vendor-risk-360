@@ -22,29 +22,40 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criti
     { id: 'compliance', label: 'Compliance Manager', icon: Award },
     { id: 'remediation', label: 'Remediation Tasks', icon: CheckSquare },
     { id: 'documents', label: 'Document Manager', icon: FileText },
-    // { id: 'analytics', label: 'Analytics Hub', icon: BarChart3 },
     { id: 'contagion', label: 'Risk Contagion Map', icon: Network, badge: criticalCount > 0 ? `${criticalCount} Critical` : null },
     { id: 'vendors', label: 'Monitored Vendors', icon: Building2 },
     { id: 'feed', label: 'Live Activity Stream', icon: Activity },
     { id: 'quota', label: 'API Quota Debugger', icon: Gauge },
   ];
 
-
   return (
-    <aside className="w-64 bg-[#0d131f] border-r border-slate-800/80 flex flex-col justify-between h-screen sticky top-0 z-30 select-none">
+    <aside className="w-64 bg-[#0a0f1d] border-r border-emerald-950/40 flex flex-col justify-between h-screen sticky top-0 z-30 select-none">
       {/* Brand Header */}
       <div>
-        <div className="p-5 border-b border-slate-800/80 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 via-amber-500 to-emerald-500 p-[1.5px] shadow-lg shadow-rose-950/40">
-            <div className="w-full h-full bg-slate-950 rounded-[10.5px] flex items-center justify-center">
-              <ShieldAlert className="w-5 h-5 text-rose-500" />
+        <div className="p-5 border-b border-emerald-950/40 flex items-center gap-3">
+          <div className="relative group flex items-center justify-center">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#00f090] via-teal-400 to-emerald-600 p-[1.5px] shadow-lg shadow-emerald-950/80 transition-transform duration-300 group-hover:scale-105">
+              <div className="w-full h-full bg-[#070a12] rounded-[10.5px] flex items-center justify-center relative overflow-hidden">
+                {/* Background Ambient Glow */}
+                <div className="absolute inset-0 bg-emerald-500/10 blur-sm"></div>
+                {/* Radiant 360 Cyber Shield SVG Emblem */}
+                <svg className="w-6 h-6 relative z-10 text-[#00f090] drop-shadow-[0_0_8px_rgba(0,240,144,0.6)]" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L3 6V11C3 16.55 7.16 21.74 12 23C16.84 21.74 21 16.55 21 11V6L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="rgba(0,240,144,0.08)" />
+                  <circle cx="12" cy="11" r="3.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+                  <path d="M12 7.5V11L14.5 12.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="12" cy="11" r="1" fill="currentColor" />
+                </svg>
+              </div>
             </div>
           </div>
           <div>
-            <h1 className="font-bold text-slate-100 text-base tracking-tight leading-none flex items-center gap-1.5">
-              VendorRisk <span className="text-cyan-400 font-extrabold">360</span>
+            <h1 className="font-extrabold text-slate-100 text-base tracking-tight leading-none flex items-center gap-1 font-sans">
+              VendorRisk <span className="text-[#00f090] font-black tracking-tight">360°</span>
             </h1>
-            <p className="text-[11px] text-slate-400 mt-1 font-medium tracking-wide">Security Incident Engine</p>
+            <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider mt-1.5 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00f090] animate-pulse"></span>
+              Enterprise OS
+            </p>
           </div>
         </div>
 
@@ -52,9 +63,9 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criti
         <div className="p-4">
           <button
             onClick={onOpenAddModal}
-            className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50 transition-all duration-200 hover:shadow-cyan-900/60 active:scale-[0.98]"
+            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 text-xs font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50 transition-all duration-200 hover:shadow-emerald-900/60 active:scale-[0.98]"
           >
-            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <Plus className="w-4 h-4 stroke-[3]" />
             <span>Onboard Vendor</span>
           </button>
         </div>
@@ -73,12 +84,12 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criti
                 onClick={() => setActiveTab(item.id)}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 ${
                   isActive
-                    ? 'bg-slate-800/90 text-cyan-300 border border-slate-700/80 shadow-md shadow-slate-950/50'
+                    ? 'bg-emerald-950/40 text-[#00f090] border border-emerald-500/30 shadow-md shadow-emerald-950/50 font-semibold'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                  <Icon className={`w-4 h-4 ${isActive ? 'text-[#00f090]' : 'text-slate-400'}`} />
                   <span>{item.label}</span>
                 </div>
 
@@ -94,13 +105,13 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criti
       </div>
 
       {/* System Status Footer */}
-      <div className="p-4 border-t border-slate-800/80 bg-slate-950/40">
+      <div className="p-4 border-t border-emerald-950/40 bg-[#070a12]">
         <div className="flex items-center justify-between text-[11px] text-slate-400">
           <div className="flex items-center gap-2">
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            <span>Engine Active</span>
+            <Radio className="w-3.5 h-3.5 text-[#00f090] animate-pulse" />
+            <span className="text-slate-300 font-medium">Engine Active</span>
           </div>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono">v1.0.4</span>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/60 text-[#00f090] border border-emerald-500/30 font-mono font-bold">v1.0.4</span>
         </div>
         <div className="mt-2 text-[10px] text-slate-500 truncate">
           Monitoring 5 Enterprise Feeds
