@@ -2,23 +2,30 @@ import os
 import requests
 from database import get_cached_response, set_cached_response
 
-HIBP_API_KEY = os.getenv("HIBP_API_KEY", "")
-
 def check_vendor_breaches(domain: str, vendor_name: str):
     cache_key = f"hibp_{domain.lower().replace('.', '_')}"
     cached = get_cached_response(cache_key)
     if cached:
         return cached
 
+    hibp_key = os.getenv("HIBP_API_KEY", "").strip()
+    if not hibp_key:
+        return {
+            "source": f"Live HIBP Scan ({domain} - API Key Unconfigured)",
+            "hibp_score": 0,
+            "total_breaches": 0,
+            "breaches": []
+        }
+
     # Query HIBP breaches endpoint directly
     url = f"https://haveibeenpwned.com/api/v3/breaches?domain={domain}"
     headers = {
-        "hibp-api-key": HIBP_API_KEY,
+        "hibp-api-key": hibp_key,
         "user-agent": "Mozilla/5.0 VendorRisk360/1.0"
     }
 
     try:
-        res = requests.get(url, headers=headers, timeout=6)
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
             breaches = res.json()
             score, breach_list = calculate_hibp_score(breaches)
@@ -30,6 +37,17 @@ def check_vendor_breaches(domain: str, vendor_name: str):
             }
             set_cached_response(cache_key, result, ttl_minutes=1440)
             return result
+        elif res.status_code == 404:
+            result = {
+                "source": f"Live HaveIBeenPwned API ({domain})",
+                "hibp_score": 0,
+                "total_breaches": 0,
+                "breaches": []
+            }
+            set_cached_response(cache_key, result, ttl_minutes=1440)
+            return result
+        else:
+            print(f"[HIBP API HTTP {res.status_code}] for {domain}")
     except Exception as e:
         print(f"[Live HIBP API Exception for {domain}] {e}")
 

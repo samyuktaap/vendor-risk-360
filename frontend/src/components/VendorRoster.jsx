@@ -8,7 +8,8 @@ import {
   ExternalLink, 
   Globe,
   ShieldAlert,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Flame
 } from 'lucide-react';
 
 export default function VendorRoster({ 
@@ -44,9 +45,12 @@ export default function VendorRoster({
       const res = await fetch(`http://localhost:8000/api/vendors/${id}/refresh`, { method: 'POST' });
       if (res.ok && onRefreshVendor) {
         onRefreshVendor();
+      } else {
+        alert("Unable to refresh vendor risk score.");
       }
     } catch (err) {
       console.error(err);
+      alert("Network error: Unable to reach security risk engine.");
     } finally {
       setRefreshingId(null);
     }
@@ -117,12 +121,16 @@ export default function VendorRoster({
           filtered.map((v) => {
             const isCritical = v.risk_score >= 70;
             const isWatch = v.risk_score >= 40 && v.risk_score < 70;
+            const hasCriticalIncident = v.critical_active > 0;
+            const hasActiveIncident = v.active_incidents > 0;
 
             return (
               <div
                 key={v.id}
                 onClick={() => onSelectVendor(v.id)}
-                className="bg-slate-900/90 border border-slate-800 hover:border-cyan-500/50 rounded-2xl p-5 shadow-lg backdrop-blur-md cursor-pointer transition-all duration-300 flex flex-col justify-between group"
+                className={`bg-slate-900/90 border rounded-2xl p-5 shadow-lg backdrop-blur-md cursor-pointer transition-all duration-300 flex flex-col justify-between group ${
+                  hasCriticalIncident ? 'border-rose-500/50 hover:border-rose-400/70' : 'border-slate-800 hover:border-cyan-500/50'
+                }`}
               >
                 <div>
                   <div className="flex items-start justify-between">
@@ -135,8 +143,11 @@ export default function VendorRoster({
                         {v.name.charAt(0)}
                       </div>
                       <div>
-                        <h3 className="font-bold text-slate-100 text-sm group-hover:text-cyan-300 transition-colors">
+                        <h3 className="font-bold text-slate-100 text-sm group-hover:text-cyan-300 transition-colors flex items-center gap-1.5">
                           {v.name}
+                          {hasCriticalIncident && (
+                            <Flame className="w-3.5 h-3.5 text-rose-400 animate-pulse" title="Active Critical Incident" />
+                          )}
                         </h3>
                         <div className="text-xs text-slate-400 font-mono flex items-center gap-1">
                           <Globe className="w-3 h-3 text-slate-500" />
@@ -145,13 +156,20 @@ export default function VendorRoster({
                       </div>
                     </div>
 
-                    <span className={`text-base font-black px-2.5 py-0.5 rounded-full font-mono border ${
-                      isCritical ? 'bg-rose-500/20 text-rose-400 border-rose-500/40' :
-                      isWatch ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' :
-                      'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                    }`}>
-                      {v.risk_score}
-                    </span>
+                    <div className="flex flex-col items-end">
+                      <span className={`text-base font-black px-2.5 py-0.5 rounded-full font-mono border ${
+                        isCritical ? 'bg-rose-500/20 text-rose-400 border-rose-500/40' :
+                        isWatch ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' :
+                        'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      }`}>
+                        {v.risk_score}
+                      </span>
+                      {hasActiveIncident && (
+                        <span className="text-[9px] font-bold text-rose-400 font-mono mt-0.5">
+                          +{v.incident_penalty}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs">

@@ -3,16 +3,16 @@ import socket
 import requests
 from database import get_cached_response, set_cached_response
 
-ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "ca221f16415e098733a815f5f75940c0dbfab4bede7c136689f9bd09ae5adfde4bf6497e313be2b1")
-
+def get_api_key():
+    return os.getenv("ABUSEIPDB_API_KEY", "").strip() or "ca221f16415e098733a815f5f75940c0dbfab4bede7c136689f9bd09ae5adfde4bf6497e313be2b1"
 
 def resolve_domain_ip(domain: str) -> str | None:
-    """Resolve domain to IPv4."""
+    """Resolve domain to IPv4 with timeout protection."""
     try:
+        socket.setdefaulttimeout(3.0)
         return socket.gethostbyname(domain)
-    except socket.gaierror:
+    except (socket.gaierror, socket.timeout, Exception):
         return None
-
 
 def check_ip_abuse_reputation(domain: str, vendor_name: str):
     """
@@ -38,10 +38,11 @@ def check_ip_abuse_reputation(domain: str, vendor_name: str):
             "risk_flags": ["Domain could not be resolved to an IP address"]
         }
 
+    api_key = get_api_key()
     try:
         url = "https://api.abuseipdb.com/api/v2/check"
         headers = {
-            "Key": ABUSEIPDB_API_KEY,
+            "Key": api_key,
             "Accept": "application/json"
         }
         params = {
@@ -49,7 +50,7 @@ def check_ip_abuse_reputation(domain: str, vendor_name: str):
             "maxAgeInDays": 90,
             "verbose": True
         }
-        res = requests.get(url, headers=headers, params=params, timeout=6)
+        res = requests.get(url, headers=headers, params=params, timeout=5)
 
         if res.status_code == 200:
             data = res.json().get("data", {})
@@ -61,10 +62,8 @@ def check_ip_abuse_reputation(domain: str, vendor_name: str):
             domain_name = data.get("domain", domain)
             country = data.get("countryCode", "Unknown")
             is_whitelisted = data.get("isWhitelisted", False)
-            is_public = data.get("isPublic", True)
             last_reported = data.get("lastReportedAt")
 
-            # Calculate abuse risk score
             abuse_score = 0
             risk_flags = []
 
@@ -105,6 +104,8 @@ def check_ip_abuse_reputation(domain: str, vendor_name: str):
             }
             set_cached_response(cache_key, result, ttl_minutes=720)
             return result
+        else:
+            print(f"[AbuseIPDB API HTTP {res.status_code}] for {domain}")
 
     except Exception as e:
         print(f"[AbuseIPDB API Error for {domain}] {e}")

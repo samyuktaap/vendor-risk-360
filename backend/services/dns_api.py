@@ -8,13 +8,14 @@ def probe_domain_email_security(domain: str):
     if cached:
         return cached
 
-    # Live DNS & TXT Record probe using Google Public DNS JSON API
+    dmarc_present = False
+    dmarc_policy = "None"
+    spf_present = False
+
+    # Probe DMARC Record
     try:
         url = f"https://dns.google/resolve?name=_dmarc.{domain}&type=TXT"
-        res = requests.get(url, timeout=5)
-        dmarc_present = False
-        dmarc_policy = "None"
-
+        res = requests.get(url, timeout=4)
         if res.status_code == 200:
             data = res.json()
             answers = data.get("Answer", [])
@@ -28,34 +29,28 @@ def probe_domain_email_security(domain: str):
                         dmarc_policy = "Quarantine"
                     else:
                         dmarc_policy = "None (Monitor Only)"
+    except Exception as e:
+        print(f"[DMARC Lookup Error for {domain}] {e}")
 
-        # Probe SPF Record
+    # Probe SPF Record
+    try:
         spf_url = f"https://dns.google/resolve?name={domain}&type=TXT"
-        spf_res = requests.get(spf_url, timeout=5)
-        spf_present = False
-
+        spf_res = requests.get(spf_url, timeout=4)
         if spf_res.status_code == 200:
             spf_data = spf_res.json()
             for a in spf_data.get("Answer", []):
                 if "v=spf1" in a.get("data", ""):
                     spf_present = True
                     break
-
-        result = {
-            "source": f"Live DNS Email Security Audit (_dmarc.{domain})",
-            "dmarc_present": dmarc_present,
-            "dmarc_policy": dmarc_policy,
-            "spf_present": spf_present,
-            "email_security_status": "STRONG_PROTECTION" if dmarc_present and dmarc_policy != "None" else ("BASIC" if spf_present else "VULNERABLE")
-        }
-        set_cached_response(cache_key, result, ttl_minutes=1440)
-        return result
     except Exception as e:
-        print(f"[DNS Probe Error for {domain}] {e}")
-        return {
-            "source": f"Live DNS Probe Failed ({domain})",
-            "dmarc_present": False,
-            "dmarc_policy": "Unknown",
-            "spf_present": False,
-            "email_security_status": "UNCHECKED"
-        }
+        print(f"[SPF Lookup Error for {domain}] {e}")
+
+    result = {
+        "source": f"Live DNS Email Security Audit (_dmarc.{domain})",
+        "dmarc_present": dmarc_present,
+        "dmarc_policy": dmarc_policy,
+        "spf_present": spf_present,
+        "email_security_status": "STRONG_PROTECTION" if dmarc_present and dmarc_policy != "None" else ("BASIC" if spf_present else "VULNERABLE")
+    }
+    set_cached_response(cache_key, result, ttl_minutes=1440)
+    return result

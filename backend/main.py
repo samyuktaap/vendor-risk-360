@@ -5,7 +5,14 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
-from database import init_db, get_db, get_quota_stats
+from database import (
+    init_db, get_db, get_quota_stats,
+    add_incident, get_incidents, update_incident_status, delete_incident,
+    get_vendor_incident_score_impact, calculate_incident_impact, recalculate_all_incident_impacts,
+    add_compliance_framework, get_vendor_compliance_frameworks, update_compliance_framework, get_compliance_summary,
+    create_remediation_task, get_vendor_remediation_tasks, update_remediation_task, get_remediation_summary,
+    COMPLIANCE_FRAMEWORKS
+)
 from seed_data import seed_database
 from services.risk_engine import compute_vendor_risk_score
 
@@ -29,6 +36,11 @@ class VendorCreate(BaseModel):
     name: str = Field(..., example="Datadog")
     domain: str = Field(..., example="datadoghq.com")
     sector: str = Field(..., example="Cloud Observability")
+    criticality_tier: Optional[str] = Field(default="Tier 2 - Business Operational", example="Tier 1 - Mission Critical")
+    data_sensitivity: Optional[str] = Field(default="Public Data", example="PII / PHI")
+    contract_value: Optional[int] = Field(default=0, example=250000)
+    custom_ticker: Optional[str] = Field(default=None, example="DDOG")
+    compliance_certs: Optional[str] = Field(default="SOC2 Type II", example="SOC2 Type II, ISO 27001")
 
 class VendorResponse(BaseModel):
     id: int
@@ -40,8 +52,48 @@ class VendorResponse(BaseModel):
     hibp_score: int
     news_score: int
     sanctions_score: int
+    criticality_tier: Optional[str] = None
+    data_sensitivity: Optional[str] = None
+    contract_value: Optional[int] = 0
+    custom_ticker: Optional[str] = None
+    compliance_certs: Optional[str] = None
     last_checked_at: Optional[str] = None
-    created_at: str
+class IncidentCreate(BaseModel):
+    vendor_id: int
+    title: str = Field(..., example="AWS S3 Data Leak")
+    description: Optional[str] = Field(default=None, example="Misconfigured bucket exposed non-sensitive log archives.")
+    category: Optional[str] = Field(default="Security Breach", example="Data Leak")
+    severity: str = Field(default="MEDIUM", example="HIGH")
+    status: str = Field(default="OPEN", example="OPEN")
+
+class IncidentStatusUpdate(BaseModel):
+    status: str = Field(..., example="RESOLVED")
+
+class ComplianceFrameworkCreate(BaseModel):
+    vendor_id: int
+    framework_name: str = Field(..., example="SOC 2 Type II")
+    framework_type: str = Field(..., example="Security")
+    compliance_score: int = Field(default=0, example=85)
+    document_path: Optional[str] = Field(default=None, example="/uploads/soc2_report.pdf")
+
+class ComplianceFrameworkUpdate(BaseModel):
+    compliance_score: int
+    gaps_identified: int
+    controls_passed: int
+    controls_total: int
+
+class RemediationTaskCreate(BaseModel):
+    vendor_id: int
+    title: str = Field(..., example="Implement MFA for admin accounts")
+    description: Optional[str] = Field(default=None, example="Vendor must implement multi-factor authentication")
+    priority: str = Field(default="MEDIUM", example="HIGH")
+    assigned_to: Optional[str] = Field(default=None, example="security-team@company.com")
+    due_date: Optional[str] = Field(default=None, example="2026-09-01")
+    source_type: str = Field(default="MANUAL", example="INCIDENT")
+    source_reference: Optional[int] = Field(default=None)
+
+class RemediationTaskUpdate(BaseModel):
+    status: str = Field(..., example="IN_PROGRESS")
 
 # Endpoints
 
@@ -59,9 +111,25 @@ def get_vendors():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, name, domain, sector, risk_tier, risk_score, hibp_score, news_score, sanctions_score, last_checked_at, created_at
-        FROM vendors
-        ORDER BY risk_score DESC
+        SELECT
+            v.id, v.name, v.domain, v.sector, v.risk_tier, v.risk_score,
+            v.hibp_score, v.news_score, v.sanctions_score, v.abuse_score,
+            v.last_checked_at, v.created_at,
+            COALESCE((
+                SELECT SUM(score_impact) FROM incidents
+                WHERE vendor_id = v.id AND status IN ('OPEN', 'INVESTIGATING')
+            ), 0) AS incident_penalty,
+            COALESCE((
+                SELECT COUNT(*) FROM incidents
+                WHERE vendor_id = v.id AND status IN ('OPEN', 'INVESTIGATING')
+            ), 0) AS active_incidents,
+            COALESCE((
+                SELECT COUNT(*) FROM incidents
+                WHERE vendor_id = v.id AND severity = 'CRITICAL'
+                  AND status IN ('OPEN', 'INVESTIGATING')
+            ), 0) AS critical_active
+        FROM vendors v
+        ORDER BY v.risk_score DESC
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -72,15 +140,20 @@ def add_vendor(vendor: VendorCreate):
     conn = get_db()
     cursor = conn.cursor()
 
+    domain_clean = vendor.domain.lower().replace("https://", "").replace("http://", "").strip("/")
+    if "." not in domain_clean or len(domain_clean) < 4:
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Invalid domain format: '{vendor.domain}'. Must be e.g. company.com")
+
     # Check for existing domain
-    cursor.execute("SELECT id FROM vendors WHERE domain = ?", (vendor.domain.lower(),))
+    cursor.execute("SELECT id FROM vendors WHERE domain = ?", (domain_clean,))
     if cursor.fetchone():
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Vendor with domain '{vendor.domain}' already exists.")
+        raise HTTPException(status_code=400, detail=f"Vendor with domain '{domain_clean}' already exists.")
 
     # Compute 100% live risk score across all 7 vectors
     try:
-        score_data = compute_vendor_risk_score(vendor.domain, vendor.name)
+        score_data = compute_vendor_risk_score(domain_clean, vendor.name, custom_ticker=vendor.custom_ticker)
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=f"Live risk scoring failed: {str(e)}")
@@ -88,23 +161,32 @@ def add_vendor(vendor: VendorCreate):
     breakdown = score_data.get("breakdown", {})
     now = datetime.utcnow().isoformat()
 
-    # Safely extract sub-scores — each service returns its own key name
-    hibp_score   = breakdown.get("hibp", {}).get("hibp_score", 0)
-    news_score   = breakdown.get("news", {}).get("news_score", 0)
-    abuse_score  = breakdown.get("abuseipdb", {}).get("score", 0)
+    # Safely extract sub-scores
+    hibp_score      = breakdown.get("hibp", {}).get("hibp_score", 0)
+    news_score      = breakdown.get("news", {}).get("score", 0) or breakdown.get("news", {}).get("news_score", 0)
+    sanctions_score = breakdown.get("sanctions", {}).get("sanctions_score", 0)
+    abuse_score     = breakdown.get("abuseipdb", {}).get("score", 0)
 
     cursor.execute("""
-        INSERT INTO vendors (name, domain, sector, risk_tier, risk_score, hibp_score, news_score, sanctions_score, last_checked_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO vendors (name, domain, sector, risk_tier, risk_score, hibp_score, news_score, sanctions_score, abuse_score,
+                            criticality_tier, data_sensitivity, contract_value, custom_ticker, compliance_certs,
+                            last_checked_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         vendor.name,
-        vendor.domain.lower(),
+        domain_clean,
         vendor.sector,
         score_data["risk_tier"],
         score_data["overall_score"],
         hibp_score,
         news_score,
+        sanctions_score,
         abuse_score,
+        vendor.criticality_tier or "Tier 2 - Business Operational",
+        vendor.data_sensitivity or "Public Data",
+        vendor.contract_value or 0,
+        vendor.custom_ticker or None,
+        vendor.compliance_certs or "SOC2 Type II",
         now,
         now
     ))
@@ -121,7 +203,7 @@ def add_vendor(vendor: VendorCreate):
         f"New Vendor Onboarded: {vendor.name}",
         f"Live security risk assessment completed — {score_data['overall_score']}/100 ({score_data['risk_tier']} Risk). 7 live vectors scanned: News, CISA KEV, AbuseIPDB, Stock, SSL, DNS, IPinfo.",
         "HIGH" if score_data['overall_score'] >= 70 else ("MEDIUM" if score_data['overall_score'] >= 40 else "LOW"),
-        f"https://{vendor.domain}",
+        f"https://{domain_clean}",
         now
     ))
 
@@ -131,14 +213,15 @@ def add_vendor(vendor: VendorCreate):
     return {
         "id": vendor_id,
         "name": vendor.name,
-        "domain": vendor.domain,
+        "domain": domain_clean,
         "sector": vendor.sector,
         "risk_tier": score_data["risk_tier"],
         "risk_score": score_data["overall_score"],
         "breakdown_summary": {
             "news": news_score,
             "hibp": hibp_score,
-            "abuse_ip": abuse_score
+            "abuse_ip": abuse_score,
+            "sanctions": sanctions_score
         },
         "message": f"✅ {vendor.name} onboarded. Live risk score: {score_data['overall_score']}/100 ({score_data['risk_tier']})"
     }
@@ -155,8 +238,7 @@ def get_vendor_detail(vendor_id: int):
         raise HTTPException(status_code=404, detail="Vendor not found.")
 
     v = dict(row)
-    # Compute full live/cached breakdown
-    score_data = compute_vendor_risk_score(v["domain"], v["name"])
+    score_data = compute_vendor_risk_score(v["domain"], v["name"], custom_ticker=v.get("custom_ticker"), vendor_id=vendor_id)
 
     return {
         "vendor": v,
@@ -176,9 +258,14 @@ def refresh_vendor_risk(vendor_id: int):
         raise HTTPException(status_code=404, detail="Vendor not found.")
 
     v = dict(row)
-    score_data = compute_vendor_risk_score(v["domain"], v["name"])
-    breakdown = score_data["breakdown"]
+    score_data = compute_vendor_risk_score(v["domain"], v["name"], custom_ticker=v.get("custom_ticker"), vendor_id=vendor_id)
+    breakdown = score_data.get("breakdown", {})
     now = datetime.utcnow().isoformat()
+
+    hibp_score      = breakdown.get("hibp", {}).get("hibp_score", 0)
+    news_score      = breakdown.get("news", {}).get("score", 0) or breakdown.get("news", {}).get("news_score", 0)
+    sanctions_score = breakdown.get("sanctions", {}).get("sanctions_score", 0)
+    abuse_score     = breakdown.get("abuseipdb", {}).get("score", 0)
 
     cursor.execute("""
         UPDATE vendors
@@ -187,14 +274,16 @@ def refresh_vendor_risk(vendor_id: int):
             hibp_score = ?,
             news_score = ?,
             sanctions_score = ?,
+            abuse_score = ?,
             last_checked_at = ?
         WHERE id = ?
     """, (
         score_data["risk_tier"],
         score_data["overall_score"],
-        breakdown["hibp"]["score"],
-        breakdown["news"]["score"],
-        breakdown["sanctions"]["score"],
+        hibp_score,
+        news_score,
+        sanctions_score,
+        abuse_score,
         now,
         vendor_id
     ))
@@ -233,123 +322,12 @@ def delete_vendor(vendor_id: int):
     conn.close()
     return {"message": "Vendor deleted successfully."}
 
-# --- INCIDENT MANAGEMENT (Inspired by reference repo) ---
-
-SEVERITY_POINTS = {"LOW": 5, "MEDIUM": 15, "HIGH": 30, "CRITICAL": 50}
-
-class IncidentCreate(BaseModel):
+class VendorIncidentCreate(BaseModel):
     title: str = Field(..., example="Ransomware Attack Detected")
-    description: Optional[str] = Field(None, example="Vendor reported unauthorized access to internal systems")
-    severity: str = Field("MEDIUM", example="HIGH")
-
-@app.post("/api/vendors/{vendor_id}/incidents", status_code=201)
-def log_incident(vendor_id: int, incident: IncidentCreate):
-    """Log a new security incident against a vendor. Automatically raises the vendor risk score."""
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM vendors WHERE id = ?", (vendor_id,))
-    vendor = cursor.fetchone()
-    if not vendor:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Vendor not found.")
-
-    severity = incident.severity.upper()
-    points = SEVERITY_POINTS.get(severity, 15)
-    now = datetime.utcnow().isoformat()
-
-    # Insert incident record
-    cursor.execute("""
-        INSERT INTO incidents (vendor_id, title, description, severity, status, score_impact, reported_at)
-        VALUES (?, ?, ?, ?, 'OPEN', ?, ?)
-    """, (vendor_id, incident.title, incident.description, severity, points, now))
-    incident_id = cursor.lastrowid
-
-    # Raise vendor risk score (cap at 100)
-    new_score = min(100, vendor["risk_score"] + points)
-    cursor.execute("UPDATE vendors SET risk_score = ?, last_checked_at = ? WHERE id = ?", (new_score, now, vendor_id))
-
-    # Log to activity feed
-    cursor.execute("""
-        INSERT INTO risk_events (vendor_id, vendor_name, source, title, summary, risk_level, url, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        vendor_id, vendor["name"], "Manual Incident Log",
-        f"[{severity}] Incident Logged: {incident.title}",
-        incident.description or f"Security incident reported for {vendor['name']}. Risk score increased by {points} points.",
-        "HIGH" if severity in ("HIGH", "CRITICAL") else "MEDIUM",
-        f"https://{vendor['domain']}", now
-    ))
-
-    conn.commit()
-    conn.close()
-
-    return {
-        "incident_id": incident_id,
-        "vendor": vendor["name"],
-        "severity": severity,
-        "score_impact": f"+{points} pts",
-        "new_risk_score": new_score,
-        "message": f"Incident logged. Vendor risk score raised by {points} points to {new_score}/100."
-    }
-
-@app.post("/api/incidents/{incident_id}/resolve")
-def resolve_incident(incident_id: int):
-    """Mark an incident resolved. Vendor risk score is reduced by half the original impact points."""
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,))
-    inc = cursor.fetchone()
-    if not inc:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Incident not found.")
-
-    if inc["status"] == "RESOLVED":
-        conn.close()
-        raise HTTPException(status_code=400, detail="Incident is already resolved.")
-
-    now = datetime.utcnow().isoformat()
-    refund = inc["score_impact"] // 2  # Refund half the score impact on resolution
-
-    cursor.execute("UPDATE incidents SET status = 'RESOLVED', resolved_at = ? WHERE id = ?", (now, incident_id))
-
-    cursor.execute("SELECT * FROM vendors WHERE id = ?", (inc["vendor_id"],))
-    vendor = cursor.fetchone()
-    new_score = max(0, vendor["risk_score"] - refund)
-    cursor.execute("UPDATE vendors SET risk_score = ?, last_checked_at = ? WHERE id = ?", (new_score, now, inc["vendor_id"]))
-
-    # Log resolution to activity feed
-    cursor.execute("""
-        INSERT INTO risk_events (vendor_id, vendor_name, source, title, summary, risk_level, url, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        vendor["id"], vendor["name"], "Incident Resolved",
-        f"Incident Resolved: {inc['title']}",
-        f"Incident marked resolved. Risk score reduced by {refund} points to {new_score}/100.",
-        "LOW", f"https://{vendor['domain']}", now
-    ))
-
-    conn.commit()
-    conn.close()
-
-    return {
-        "incident_id": incident_id,
-        "status": "RESOLVED",
-        "score_refund": f"-{refund} pts",
-        "new_risk_score": new_score,
-        "message": f"Incident resolved. Risk score reduced by {refund} points to {new_score}/100."
-    }
-
-@app.get("/api/vendors/{vendor_id}/incidents")
-def get_vendor_incidents(vendor_id: int):
-    """Get all security incidents logged against a vendor."""
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM incidents WHERE vendor_id = ? ORDER BY reported_at DESC
-    """, (vendor_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    description: Optional[str] = Field(default=None, example="Vendor reported unauthorized access")
+    category: Optional[str] = Field(default="Security Breach", example="Ransomware")
+    severity: str = Field(default="MEDIUM", example="HIGH")
+    status: str = Field(default="OPEN", example="OPEN")
 
 @app.get("/api/contagion")
 def get_risk_contagion_map():
@@ -446,3 +424,184 @@ def reset_quota_counters():
     conn.commit()
     conn.close()
     return {"message": "Reset API quota counters and cleared response cache."}
+
+# Security Incident Management API Endpoints
+
+@app.get("/api/incidents")
+def list_incidents(vendor_id: Optional[int] = Query(None)):
+    """Fetch all reported vendor security incidents."""
+    incidents = get_incidents(vendor_id)
+    return incidents
+
+@app.get("/api/vendors/{vendor_id}/incidents")
+def get_vendor_incidents_list(vendor_id: int):
+    """Fetch incidents for a specific vendor along with score impact metrics."""
+    incidents = get_incidents(vendor_id)
+    impact_stats = get_vendor_incident_score_impact(vendor_id)
+    return {
+        "incidents": incidents,
+        "impact_stats": impact_stats
+    }
+
+@app.post("/api/vendors/{vendor_id}/incidents", status_code=201)
+def log_vendor_incident(vendor_id: int, payload: VendorIncidentCreate):
+    """Log incident from vendor detail panel — delegates to unified incident engine."""
+    return create_new_incident(IncidentCreate(
+        vendor_id=vendor_id,
+        title=payload.title,
+        description=payload.description,
+        category=payload.category,
+        severity=payload.severity,
+        status=payload.status,
+    ))
+
+@app.post("/api/incidents")
+def create_new_incident(payload: IncidentCreate):
+    """Log a new security incident against a vendor and trigger risk score recalculation."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, domain FROM vendors WHERE id = ?", (payload.vendor_id,))
+    vendor = cursor.fetchone()
+    conn.close()
+    
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+
+    incident_id = add_incident(
+        vendor_id=payload.vendor_id,
+        title=payload.title,
+        description=payload.description or "",
+        category=payload.category or "Security Breach",
+        severity=payload.severity,
+        status=payload.status
+    )
+
+    # Recalculate vendor's risk score incorporating the new incident impact
+    score_res = compute_vendor_risk_score(domain=vendor["domain"], vendor_name=vendor["name"], vendor_id=vendor["id"])
+    new_score = score_res["overall_score"]
+    new_tier = score_res["risk_tier"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE vendors SET risk_score = ?, risk_tier = ? WHERE id = ?", (new_score, new_tier, vendor["id"]))
+    
+    # Log to risk_events feed
+    cursor.execute("""
+        INSERT INTO risk_events (vendor_id, vendor_name, source, title, summary, risk_level, url, timestamp)
+        VALUES (?, ?, 'INCIDENT_LOG', ?, ?, ?, '', ?)
+    """, (
+        vendor["id"],
+        vendor["name"],
+        f"🚨 Logged Incident: {payload.title}",
+        f"Severity: {payload.severity} | Category: {payload.category}. Score Impact: +{calculate_incident_impact(payload.severity, payload.status)} pts",
+        payload.severity,
+        datetime.utcnow().isoformat()
+    ))
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": incident_id,
+        "message": "Security incident logged successfully and vendor risk score recalculated.",
+        "new_risk_score": new_score,
+        "new_risk_tier": new_tier
+    }
+
+@app.patch("/api/incidents/{incident_id}")
+def update_incident(incident_id: int, payload: IncidentStatusUpdate):
+    """Update incident resolution status (e.g. RESOLVED / INVESTIGATING) and update vendor risk score."""
+    success = update_incident_status(incident_id, payload.status)
+    if not success:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    new_score = None
+    new_tier = None
+
+    # Find affected vendor and recalculate risk score
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT vendor_id FROM incidents WHERE id = ?", (incident_id,))
+    row = cursor.fetchone()
+    if row:
+        vendor_id = row["vendor_id"]
+        cursor.execute("SELECT id, name, domain FROM vendors WHERE id = ?", (vendor_id,))
+        vendor = cursor.fetchone()
+        conn.close()
+        if vendor:
+            score_res = compute_vendor_risk_score(domain=vendor["domain"], vendor_name=vendor["name"], vendor_id=vendor["id"])
+            new_score = score_res["overall_score"]
+            new_tier = score_res["risk_tier"]
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE vendors SET risk_score = ?, risk_tier = ? WHERE id = ?", (new_score, new_tier, vendor["id"]))
+            conn.commit()
+            conn.close()
+    else:
+        conn.close()
+
+    return {
+        "message": f"Incident #{incident_id} status updated to {payload.status}.",
+        "new_risk_score": new_score,
+        "new_risk_tier": new_tier,
+    }
+
+@app.delete("/api/incidents/{incident_id}")
+def delete_incident_endpoint(incident_id: int):
+    """Delete an incident record and recalculate vendor risk score."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT vendor_id FROM incidents WHERE id = ?", (incident_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    delete_incident(incident_id)
+
+    if row:
+        vendor_id = row["vendor_id"]
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, domain FROM vendors WHERE id = ?", (vendor_id,))
+        vendor = cursor.fetchone()
+        conn.close()
+        if vendor:
+            score_res = compute_vendor_risk_score(domain=vendor["domain"], vendor_name=vendor["name"], vendor_id=vendor["id"])
+            new_score = score_res["overall_score"]
+            new_tier = score_res["risk_tier"]
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE vendors SET risk_score = ?, risk_tier = ? WHERE id = ?", (new_score, new_tier, vendor["id"]))
+            conn.commit()
+            conn.close()
+
+    return {"message": f"Incident #{incident_id} deleted."}
+
+@app.post("/api/incidents/recalculate-aging")
+def recalculate_incident_aging():
+    """Recalculate all open incident impacts to apply aging logic (reduces impact for older incidents)."""
+    updated_count = recalculate_all_incident_impacts()
+    
+    # Recalculate all vendor risk scores after aging update
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, domain FROM vendors")
+    vendors = cursor.fetchall()
+    conn.close()
+    
+    for vendor in vendors:
+        try:
+            score_res = compute_vendor_risk_score(domain=vendor["domain"], vendor_name=vendor["name"], vendor_id=vendor["id"])
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE vendors SET risk_score = ?, risk_tier = ? WHERE id = ?", 
+                         (score_res["overall_score"], score_res["risk_tier"], vendor["id"]))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error recalculating risk for vendor {vendor['id']}: {e}")
+    
+    return {
+        "message": f"Recalculated aging for {updated_count} open incidents and updated all vendor risk scores.",
+        "incidents_updated": updated_count,
+        "vendors_updated": len(vendors)
+    }
+

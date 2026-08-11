@@ -9,9 +9,16 @@ def probe_domain_security_headers(domain: str):
 
     url = f"https://{domain}"
     try:
-        res = requests.get(url, timeout=6, allow_redirects=True, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VendorRisk360/1.0"
-        })
+        try:
+            res = requests.get(url, timeout=5, allow_redirects=True, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VendorRisk360/1.0"
+            })
+        except requests.exceptions.SSLError:
+            # Fallback to HTTP if SSL handshake fails
+            res = requests.get(f"http://{domain}", timeout=5, allow_redirects=True, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VendorRisk360/1.0"
+            })
+
         headers = res.headers
 
         missing_headers = []
@@ -35,7 +42,7 @@ def probe_domain_security_headers(domain: str):
             ssl_score += 20
 
         result = {
-            "source": f"Live HTTPS Header Probe (https://{domain})",
+            "source": f"Live HTTPS Header Probe ({url})",
             "ssl_risk_score": min(100, ssl_score),
             "missing_headers": missing_headers,
             "hsts_present": "Strict-Transport-Security" in headers,

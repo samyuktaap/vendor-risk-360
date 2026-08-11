@@ -24,7 +24,11 @@ import {
   Flame,
   ClipboardList,
   Plus,
-  CheckCheck
+  CheckCheck,
+  Sparkles,
+  Brain,
+  ArrowUpRight,
+  Target
 } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import RiskScoreRing from './RiskScoreRing';
@@ -36,7 +40,8 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const [activeTab, setActiveTab] = useState('actions');
   const [incidents, setIncidents] = useState([]);
   const [showIncidentForm, setShowIncidentForm] = useState(false);
-  const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'MEDIUM' });
+  const [incidentForm, setIncidentForm] = useState({ title: '', description: '', category: 'Security Breach', severity: 'MEDIUM' });
+  const [incidentStats, setIncidentStats] = useState(null);
   const [loggingIncident, setLoggingIncident] = useState(false);
   const [resolvingId, setResolvingId] = useState(null);
 
@@ -48,16 +53,22 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   }, [vendorId]);
 
 
+  const [error, setError] = useState(null);
+
   const fetchVendorDetail = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}`);
       if (res.ok) {
         const json = await res.json();
         setData(json);
+      } else {
+        setError(`Failed to load vendor risk assessment (HTTP ${res.status}).`);
       }
     } catch (err) {
       console.error("Failed to fetch vendor detail:", err);
+      setError("Unable to connect to Security Risk Engine server.");
     } finally {
       setLoading(false);
     }
@@ -66,7 +77,11 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const fetchIncidents = async () => {
     try {
       const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/incidents`);
-      if (res.ok) setIncidents(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setIncidents(data.incidents || []);
+        setIncidentStats(data.impact_stats || null);
+      }
     } catch (err) { console.error("Failed to fetch incidents:", err); }
   };
 
@@ -74,14 +89,14 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
     if (!incidentForm.title.trim()) return;
     setLoggingIncident(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/incidents`, {
+      const res = await fetch(`http://localhost:8000/api/incidents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(incidentForm)
+        body: JSON.stringify({ vendor_id: vendorId, ...incidentForm, status: 'OPEN' })
       });
       if (res.ok) {
         setShowIncidentForm(false);
-        setIncidentForm({ title: '', description: '', severity: 'MEDIUM' });
+        setIncidentForm({ title: '', description: '', category: 'Security Breach', severity: 'MEDIUM' });
         await fetchIncidents();
         await fetchVendorDetail();
         if (onRefreshVendor) onRefreshVendor();
@@ -93,7 +108,11 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const handleResolveIncident = async (incidentId) => {
     setResolvingId(incidentId);
     try {
-      const res = await fetch(`http://localhost:8000/api/incidents/${incidentId}/resolve`, { method: 'POST' });
+      const res = await fetch(`http://localhost:8000/api/incidents/${incidentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'RESOLVED' })
+      });
       if (res.ok) {
         await fetchIncidents();
         await fetchVendorDetail();
@@ -141,6 +160,8 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const vendor = data?.vendor;
   const assessment = data?.risk_assessment;
   const breakdown = assessment?.breakdown;
+  const aiSummary = assessment?.ai_summary;
+  const predictions = aiSummary?.predictions_90d;
   const score = assessment?.overall_score ?? vendor?.risk_score ?? 0;
   const history30d = assessment?.history_30d || [];
 
@@ -218,7 +239,18 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
         {loading ? (
           <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
             <RefreshCw className="w-6 h-6 animate-spin text-cyan-400 mr-2" />
-            Evaluating Live No-Key API Radar Feeds...
+            Evaluating Live API Radar Feeds...
+          </div>
+        ) : error ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
+            <AlertTriangle className="w-10 h-10 text-rose-400" />
+            <div className="text-sm font-bold text-slate-200">{error}</div>
+            <button
+              onClick={fetchVendorDetail}
+              className="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 text-xs text-cyan-300 font-semibold flex items-center gap-2"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Retry Evaluation
+            </button>
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -287,7 +319,80 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
               </div>
             </div>
 
-            {/* Component Sub-score Cards (5 Live Vectors) */}
+            {/* 🤖 AI Executive Risk Briefing Card */}
+            {aiSummary && (
+              <div className="rounded-2xl overflow-hidden border border-violet-500/20 bg-gradient-to-br from-violet-950/40 via-slate-900/80 to-slate-900/80 shadow-lg shadow-violet-950/20">
+                <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 border-b border-violet-500/20">
+                  <div className="w-7 h-7 rounded-lg bg-violet-500/15 border border-violet-500/25 flex items-center justify-center">
+                    <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-violet-200">AI Executive Risk Briefing</div>
+                    <div className="text-[10px] text-violet-400/70">7-Vector Threat Synthesis · Generated {new Date(aiSummary.generated_at).toLocaleTimeString()}</div>
+                  </div>
+                  <span className={`ml-auto px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                    aiSummary.exposure_level === 'CRITICAL EXPOSURE'
+                      ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                      : aiSummary.exposure_level === 'MODERATE EXPOSURE'
+                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                      : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                  }`}>
+                    {aiSummary.exposure_level}
+                  </span>
+                </div>
+                <div className="p-4">
+                  {aiSummary.executive_summary.split('\n\n').map((para, i) => (
+                    <p key={i} className={`text-xs leading-relaxed mb-2 last:mb-0 ${
+                      i === 0 ? 'text-slate-100 font-medium' : 'text-slate-400'
+                    }`}>
+                      {para}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 🔮 90-Day Predictive Analytics Card */}
+            {predictions && (
+              <div className="rounded-2xl overflow-hidden border border-cyan-500/15 bg-gradient-to-br from-slate-900/80 to-slate-900/60 shadow-lg">
+                <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 border-b border-slate-700/50">
+                  <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+                    <Brain className="w-3.5 h-3.5 text-cyan-400" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-200">90-Day Predictive Risk Forecast</div>
+                    <div className="text-[10px] text-slate-500">{predictions.confidence_level}</div>
+                  </div>
+                  <span className="ml-auto text-[10px] font-bold px-2.5 py-1 rounded-full border"
+                    style={{ color: predictions.trend_color, borderColor: `${predictions.trend_color}40`, background: `${predictions.trend_color}15` }}>
+                    {predictions.trend_badge}
+                  </span>
+                </div>
+                <div className="p-4">
+                  <div className="flex items-center gap-4 mb-3">
+                    <div className="text-center">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider">Current</div>
+                      <div className="text-2xl font-black text-slate-100">{predictions.current_score}</div>
+                      <div className="text-[9px] text-slate-500">risk score</div>
+                    </div>
+                    <div className="flex-1 flex items-center">
+                      <div className="h-0.5 flex-1 bg-gradient-to-r from-slate-700 to-slate-600 rounded-full relative">
+                        <ArrowUpRight className="w-3.5 h-3.5 absolute right-0 -top-1.5" style={{ color: predictions.trend_color }} />
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider">90 Days</div>
+                      <div className="text-2xl font-black" style={{ color: predictions.trend_color }}>{predictions.predicted_score_90d}</div>
+                      <div className="text-[9px] font-semibold" style={{ color: predictions.trend_color }}>{predictions.score_delta}</div>
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-800/50 border border-slate-700/50">
+                    <div className="text-[10px] text-slate-500 mb-0.5 flex items-center gap-1"><Target className="w-3 h-3" /> Key Prediction Factor</div>
+                    <div className="text-xs text-slate-300">{predictions.key_prediction_factor}</div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
               <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
                 <div className="flex justify-between text-[11px] text-slate-400 mb-1">
@@ -398,6 +503,17 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                 Live Google News ({breakdown?.news?.articles?.length ?? 0})
               </button>
               <button
+                onClick={() => setActiveTab('ai')}
+                className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
+                  activeTab === 'ai'
+                    ? 'border-violet-400 text-violet-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Sparkles className="w-3 h-3" />
+                AI Briefing
+              </button>
+              <button
                 onClick={() => { setActiveTab('incidents'); fetchIncidents(); }}
                 className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
                   activeTab === 'incidents'
@@ -407,12 +523,111 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
               >
                 <ClipboardList className="w-3.5 h-3.5" />
                 Incident Log ({incidents.length})
+                {incidentStats?.critical_active > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[9px] animate-pulse">
+                    {incidentStats.critical_active} CRIT
+                  </span>
+                )}
               </button>
             </div>
+
+            {/* TAB CONTENT: AI BRIEFING */}
+            {activeTab === 'ai' && (
+              <div className="space-y-4">
+                {aiSummary ? (
+                  <>
+                    {/* Exposure Badge */}
+                    <div className={`p-4 rounded-2xl border ${
+                      aiSummary.exposure_level === 'CRITICAL EXPOSURE'
+                        ? 'bg-rose-950/30 border-rose-500/30'
+                        : aiSummary.exposure_level === 'MODERATE EXPOSURE'
+                        ? 'bg-amber-950/30 border-amber-500/30'
+                        : 'bg-emerald-950/30 border-emerald-500/30'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Sparkles className="w-4 h-4 text-violet-400" />
+                        <span className="text-xs font-bold text-slate-200">AI Executive Risk Briefing</span>
+                        <span className="ml-auto text-[10px] font-mono text-slate-500">Generated {new Date(aiSummary.generated_at).toLocaleString()}</span>
+                      </div>
+                      {aiSummary.executive_summary.split('\n\n').map((para, i) => (
+                        <p key={i} className={`text-xs leading-relaxed mb-2 last:mb-0 ${i === 0 ? 'text-slate-100 font-medium' : 'text-slate-400'}`}>
+                          {para}
+                        </p>
+                      ))}
+                    </div>
+
+                    {/* 90-Day Predictions Detail */}
+                    {predictions && (
+                      <div className="bg-slate-900/60 border border-slate-700/50 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Brain className="w-4 h-4 text-cyan-400" />
+                          <span className="text-xs font-bold text-slate-200">90-Day Risk Trajectory</span>
+                          <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                            style={{ color: predictions.trend_color, background: `${predictions.trend_color}15` }}>
+                            {predictions.trend_direction}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                          <div className="bg-slate-800/60 rounded-xl p-3">
+                            <div className="text-[10px] text-slate-500 mb-1">Current Score</div>
+                            <div className="text-xl font-black text-slate-100">{predictions.current_score}</div>
+                          </div>
+                          <div className="bg-slate-800/60 rounded-xl p-3">
+                            <div className="text-[10px] text-slate-500 mb-1">Delta</div>
+                            <div className="text-xl font-black" style={{ color: predictions.trend_color }}>{predictions.score_delta}</div>
+                          </div>
+                          <div className="bg-slate-800/60 rounded-xl p-3">
+                            <div className="text-[10px] text-slate-500 mb-1">90-Day Forecast</div>
+                            <div className="text-xl font-black" style={{ color: predictions.trend_color }}>{predictions.predicted_score_90d}</div>
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500">{predictions.confidence_level}</div>
+                        <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-700/40">
+                          <div className="text-[10px] text-slate-500 mb-1 font-semibold uppercase tracking-wider">Key Prediction Driver</div>
+                          <div className="text-xs text-slate-300">{predictions.key_prediction_factor}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Vendor Metadata */}
+                    <div className="bg-slate-900/60 border border-slate-700/50 rounded-2xl p-4 space-y-2">
+                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">Vendor Risk Profile</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          ['Criticality Tier', vendor?.criticality_tier || '—'],
+                          ['Data Sensitivity', vendor?.data_sensitivity || '—'],
+                          ['Contract Value', vendor?.contract_value ? `$${Number(vendor.contract_value).toLocaleString()}` : '—'],
+                          ['Stock Ticker', vendor?.custom_ticker || breakdown?.stock?.ticker || 'Private'],
+                          ['Compliance Certs', vendor?.compliance_certs || '—'],
+                          ['Last Assessed', vendor?.last_checked_at ? new Date(vendor.last_checked_at).toLocaleDateString() : '—'],
+                        ].map(([label, val]) => (
+                          <div key={label} className="bg-slate-800/40 rounded-xl p-2.5">
+                            <div className="text-[10px] text-slate-500">{label}</div>
+                            <div className="text-xs text-slate-200 font-semibold mt-0.5 truncate">{val}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-10 text-slate-500 text-xs">AI briefing not available. Refresh risk to generate.</div>
+                )}
+              </div>
+            )}
 
             {/* TAB CONTENT: INCIDENT LOG */}
             {activeTab === 'incidents' && (
               <div className="space-y-3">
+                {/* Impact Summary */}
+                {incidentStats && incidentStats.active_incidents > 0 && (
+                  <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-rose-300">
+                      <AlertTriangle className="w-4 h-4 text-rose-400" />
+                      <span>{incidentStats.active_incidents} active incident(s) applying <strong>+{incidentStats.total_impact} pts</strong> score penalty</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Log New Incident Button */}
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-slate-400">Manually log security incidents. Score auto-adjusts based on severity.</p>
@@ -441,16 +656,28 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                       onChange={e => setIncidentForm({...incidentForm, description: e.target.value})}
                       className="w-full bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500 h-16 resize-none"
                     />
-                    <div className="flex gap-2 items-center">
+                    <div className="flex gap-2 items-center flex-wrap">
+                      <select
+                        value={incidentForm.category}
+                        onChange={e => setIncidentForm({...incidentForm, category: e.target.value})}
+                        className="bg-slate-800 border border-slate-700 text-slate-100 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500"
+                      >
+                        <option value="Data Breach">Data Breach</option>
+                        <option value="Ransomware">Ransomware</option>
+                        <option value="Outage">Outage</option>
+                        <option value="SLA Breach">SLA Breach</option>
+                        <option value="Data Leak">Data Leak</option>
+                        <option value="Zero-Day">Zero-Day</option>
+                      </select>
                       <select
                         value={incidentForm.severity}
                         onChange={e => setIncidentForm({...incidentForm, severity: e.target.value})}
                         className="bg-slate-800 border border-slate-700 text-slate-100 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500"
                       >
-                        <option value="LOW">LOW (+5 pts)</option>
-                        <option value="MEDIUM">MEDIUM (+15 pts)</option>
-                        <option value="HIGH">HIGH (+30 pts)</option>
-                        <option value="CRITICAL">CRITICAL (+50 pts)</option>
+                        <option value="LOW">LOW (+4 pts)</option>
+                        <option value="MEDIUM">MEDIUM (+8 pts)</option>
+                        <option value="HIGH">HIGH (+15 pts)</option>
+                        <option value="CRITICAL">CRITICAL (+25 pts)</option>
                       </select>
                       <button
                         onClick={handleLogIncident}
@@ -478,15 +705,19 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                           'bg-slate-700 text-slate-300'
                         }`}>{inc.severity}</span>
                         <span className="font-semibold text-slate-100">{inc.title}</span>
+                        {inc.category && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">{inc.category}</span>
+                        )}
                         {inc.status === 'RESOLVED' && <span className="text-[10px] text-emerald-400 font-bold">✓ RESOLVED</span>}
+                        {inc.status === 'MITIGATED' && <span className="text-[10px] text-emerald-400 font-bold">✓ MITIGATED</span>}
                       </div>
                       {inc.description && <p className="text-slate-400">{inc.description}</p>}
                       <div className="text-[10px] text-slate-500">
-                        Score impact: +{inc.score_impact} pts • Reported: {new Date(inc.reported_at).toLocaleDateString()}
+                        Score impact: {inc.status === 'OPEN' || inc.status === 'INVESTIGATING' ? `+${inc.score_impact}` : '0'} pts • Reported: {new Date(inc.reported_at).toLocaleDateString()}
                         {inc.resolved_at && ` • Resolved: ${new Date(inc.resolved_at).toLocaleDateString()}`}
                       </div>
                     </div>
-                    {inc.status === 'OPEN' && (
+                    {['OPEN', 'INVESTIGATING'].includes(inc.status) && (
                       <button
                         onClick={() => handleResolveIncident(inc.id)}
                         disabled={resolvingId === inc.id}

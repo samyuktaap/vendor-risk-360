@@ -19,16 +19,56 @@ WEIGHT_SSL = 0.10        # 10% Infrastructure Security & SSL Headers (Live HTTPS
 WEIGHT_DNS = 0.10        # 10% DMARC / SPF Email Security (Google Public DNS)
 WEIGHT_IPINFO = 0.05     # 5%  IPinfo Network Intelligence (Hosting Country Risk, ASN)
 
-def compute_vendor_risk_score(domain: str, vendor_name: str):
-    news_res = fetch_vendor_news(vendor_name, domain)
-    cisa_res = fetch_cisa_exploited_vulnerabilities(vendor_name, domain)
-    stock_res = fetch_vendor_stock_risk(domain, vendor_name)
-    ssl_res = probe_domain_security_headers(domain)
-    dns_res = probe_domain_email_security(domain)
-    hibp_res = check_vendor_breaches(domain, vendor_name)
-    sanctions_res = check_vendor_sanctions(vendor_name)
-    ipinfo_res = probe_ip_intelligence(domain, vendor_name)
-    abuse_res = check_ip_abuse_reputation(domain, vendor_name)
+from services.ai_summary_engine import generate_ai_executive_summary
+from concurrent.futures import ThreadPoolExecutor
+
+def compute_vendor_risk_score(domain: str, vendor_name: str, custom_ticker: str = None, vendor_id: int = None):
+    # Lookup vendor_id by domain if not provided directly
+    from database import get_db, get_vendor_incident_score_impact
+    if not vendor_id:
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM vendors WHERE domain = ?", (domain.lower(),))
+            r = cursor.fetchone()
+            if r:
+                vendor_id = r["id"]
+            conn.close()
+        except Exception:
+            pass
+
+    incident_impact_data = get_vendor_incident_score_impact(vendor_id) if vendor_id else {"total_impact": 0, "total_incidents": 0, "active_incidents": 0, "critical_active": 0}
+    incident_score_penalty = incident_impact_data.get("total_impact", 0)
+
+    # Execute all 9 live probes concurrently to reduce scoring latency to <3 seconds
+    def safe_run(func, *args):
+        try:
+            res = func(*args)
+            return res if isinstance(res, dict) else {}
+        except Exception as e:
+            print(f"[Vector Probe Exception in {func.__name__}] {e}")
+            return {}
+
+    with ThreadPoolExecutor(max_workers=9) as executor:
+        f_news = executor.submit(safe_run, fetch_vendor_news, vendor_name, domain)
+        f_cisa = executor.submit(safe_run, fetch_cisa_exploited_vulnerabilities, vendor_name, domain)
+        f_stock = executor.submit(safe_run, fetch_vendor_stock_risk, domain, vendor_name, custom_ticker)
+        f_ssl = executor.submit(safe_run, probe_domain_security_headers, domain)
+        f_dns = executor.submit(safe_run, probe_domain_email_security, domain)
+        f_hibp = executor.submit(safe_run, check_vendor_breaches, domain, vendor_name)
+        f_sanctions = executor.submit(safe_run, check_vendor_sanctions, vendor_name)
+        f_ipinfo = executor.submit(safe_run, probe_ip_intelligence, domain, vendor_name)
+        f_abuse = executor.submit(safe_run, check_ip_abuse_reputation, domain, vendor_name)
+
+        news_res = f_news.result()
+        cisa_res = f_cisa.result()
+        stock_res = f_stock.result()
+        ssl_res = f_ssl.result()
+        dns_res = f_dns.result()
+        hibp_res = f_hibp.result()
+        sanctions_res = f_sanctions.result()
+        ipinfo_res = f_ipinfo.result()
+        abuse_res = f_abuse.result()
 
     news_score = news_res.get("news_score", 0)
     cisa_score = cisa_res.get("cisa_score", 0)
@@ -38,7 +78,7 @@ def compute_vendor_risk_score(domain: str, vendor_name: str):
     abuse_score = abuse_res.get("abuse_score", 0)
     ipinfo_score = ipinfo_res.get("ip_risk_score", 0)
 
-    # Weighted Composite Score (0-100) across 7 live security vectors
+    # Weighted Composite Score (0-100) across 7 live security vectors + Incident Modifier Penalty
     composite_score = round(
         (news_score * WEIGHT_NEWS) +
         (cisa_score * WEIGHT_CISA) +
@@ -46,7 +86,8 @@ def compute_vendor_risk_score(domain: str, vendor_name: str):
         (stock_score * WEIGHT_STOCK) +
         (ssl_score * WEIGHT_SSL) +
         (dns_score * WEIGHT_DNS) +
-        (ipinfo_score * WEIGHT_IPINFO)
+        (ipinfo_score * WEIGHT_IPINFO) +
+        incident_score_penalty
     )
 
     final_score = max(0, min(100, composite_score))
@@ -62,15 +103,36 @@ def compute_vendor_risk_score(domain: str, vendor_name: str):
         risk_tier = "Low"
 
     # Actionable Security Recommendations
-    recommendations = generate_recommendations(final_score, news_res, cisa_res, stock_res, ssl_res, dns_res, abuse_res, ipinfo_res)
+    incident_modifier_data = {
+        "total_impact": incident_score_penalty,
+        "total_incidents": incident_impact_data.get("total_incidents", 0),
+        "active_incidents": incident_impact_data.get("active_incidents", 0),
+        "critical_active": incident_impact_data.get("critical_active", 0),
+    }
+    recommendations = generate_recommendations(final_score, news_res, cisa_res, stock_res, ssl_res, dns_res, abuse_res, ipinfo_res, incident_modifier_data)
 
     # Generate 30-Day Risk History Trend Data Points for Recharts Chart
     history_trend = generate_30d_history(final_score, domain)
+
+    # Generate AI Executive Briefing & 90-Day Predictive Threat Model
+    breakdown_dict = {
+        "news": news_res,
+        "cisa": cisa_res,
+        "stock": stock_res,
+        "ssl": ssl_res,
+        "dns": dns_res,
+        "hibp": hibp_res,
+        "sanctions": sanctions_res,
+        "ipinfo": ipinfo_res,
+        "abuseipdb": abuse_res
+    }
+    ai_briefing = generate_ai_executive_summary(final_score, breakdown_dict, vendor_name)
 
     return {
         "overall_score": final_score,
         "risk_tier": risk_tier,
         "last_updated": datetime.utcnow().isoformat(),
+        "ai_summary": ai_briefing,
         "breakdown": {
             "news": {
                 "score": news_score,
@@ -139,11 +201,38 @@ def compute_vendor_risk_score(domain: str, vendor_name: str):
         },
         "recommended_actions": recommendations,
         "history_30d": history_trend,
-        "formula_description": f"Overall Score = ({news_score}×25%) + ({cisa_score}×20%) + ({abuse_score}×15%) + ({stock_score}×15%) + ({ssl_score}×10%) + ({dns_score}×10%) + ({ipinfo_score}×5%) = {final_score}/100"
+        "incident_modifier": {
+            "total_impact": incident_score_penalty,
+            "total_incidents": incident_impact_data.get("total_incidents", 0),
+            "active_incidents": incident_impact_data.get("active_incidents", 0),
+            "critical_active": incident_impact_data.get("critical_active", 0),
+            "penalty_applied": incident_score_penalty > 0,
+        },
+        "formula_description": (
+            f"Overall Score = ({news_score}×25%) + ({cisa_score}×20%) + ({abuse_score}×15%) + "
+            f"({stock_score}×15%) + ({ssl_score}×10%) + ({dns_score}×10%) + ({ipinfo_score}×5%)"
+            + (f" + Incident Penalty (+{incident_score_penalty})" if incident_score_penalty else "")
+            + f" = {final_score}/100"
+        )
     }
 
-def generate_recommendations(overall_score, news_res, cisa_res, stock_res, ssl_res, dns_res, abuse_res=None, ipinfo_res=None):
+def generate_recommendations(overall_score, news_res, cisa_res, stock_res, ssl_res, dns_res, abuse_res=None, ipinfo_res=None, incident_modifier=None):
     actions = []
+
+    # Incident-specific recommendations
+    if incident_modifier and incident_modifier.get("critical_active", 0) > 0:
+        actions.append({
+            "priority": "CRITICAL",
+            "title": f"🚨 {incident_modifier['critical_active']} Active Critical Security Incident(s) Require Immediate CISO Attention",
+            "description": f"Vendor has {incident_modifier['critical_active']} unresolved CRITICAL severity incidents actively applying +{incident_modifier.get('total_impact', 0)} points to risk score. Escalate to executive leadership and activate incident response playbook."
+        })
+
+    if incident_modifier and incident_modifier.get("active_incidents", 0) > 0:
+        actions.append({
+            "priority": "HIGH",
+            "title": "Active Security Incidents Impacting Vendor Risk Score",
+            "description": f"{incident_modifier['active_incidents']} unresolved incident(s) are currently elevating vendor risk. Review incident timeline in Incident Center and coordinate remediation with vendor security team."
+        })
 
     if cisa_res.get("vulnerabilities_count", 0) > 0:
         actions.append({
@@ -231,7 +320,7 @@ def generate_30d_history(current_score, domain):
         rows = {}
 
     # Build 30-day chart: today = live score, past days = derived from event activity
-    for i in range(30, -1, -1):
+    for i in range(29, -1, -1):
         day_obj = base_date - timedelta(days=i)
         day_label = day_obj.strftime("%b %d")
         day_key = day_obj.strftime("%Y-%m-%d")

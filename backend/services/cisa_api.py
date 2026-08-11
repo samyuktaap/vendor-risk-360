@@ -16,7 +16,6 @@ def fetch_cisa_exploited_vulnerabilities(vendor_name: str, domain: str):
             data = res.json()
             vulnerabilities = data.get("vulnerabilities", [])
 
-            # Filter for CVEs matching vendor name or domain
             v_lower = vendor_name.lower()
             d_prefix = domain.split('.')[0].lower()
 
@@ -26,9 +25,11 @@ def fetch_cisa_exploited_vulnerabilities(vendor_name: str, domain: str):
             for v in vulnerabilities:
                 vendor_project = v.get("vendorProject", "").lower()
                 product = v.get("product", "").lower()
-                desc = v.get("shortDescription", "").lower()
 
-                if v_lower in vendor_project or d_prefix in vendor_project or v_lower in product or d_prefix in product:
+                match_v = len(v_lower) >= 3 and (v_lower == vendor_project or v_lower == product or v_lower in vendor_project.split() or v_lower in product.split())
+                match_d = len(d_prefix) >= 3 and (d_prefix == vendor_project or d_prefix == product or d_prefix in vendor_project.split() or d_prefix in product.split())
+
+                if match_v or match_d:
                     matches.append({
                         "cve_id": v.get("cveID"),
                         "vendor_project": v.get("vendorProject"),

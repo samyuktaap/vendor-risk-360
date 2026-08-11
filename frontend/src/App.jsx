@@ -8,6 +8,7 @@ import LiveActivityFeed from './components/LiveActivityFeed';
 import DevQuotaDrawer from './components/DevQuotaDrawer';
 import VendorDetailModal from './components/VendorDetailModal';
 import AddVendorModal from './components/AddVendorModal';
+import IncidentManager from './components/IncidentManager';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -43,6 +44,9 @@ export default function App() {
     }
   };
 
+  const criticalVendors = vendors.filter(v => v.risk_score >= 70);
+  const activeIncidentsCount = vendors.reduce((sum, v) => sum + (v.active_incidents || 0), 0);
+
   const handleDeleteVendor = async (vendorId) => {
     if (!window.confirm("Are you sure you want to remove this vendor from security monitoring?")) return;
 
@@ -57,8 +61,6 @@ export default function App() {
     }
   };
 
-  const criticalVendors = vendors.filter(v => v.risk_score >= 70);
-
   return (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 flex font-sans antialiased">
       {/* Navigation Sidebar */}
@@ -67,6 +69,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onOpenAddModal={() => setIsAddModalOpen(true)}
         criticalCount={criticalVendors.length}
+        activeIncidentsCount={activeIncidentsCount}
       />
 
       {/* Main Container */}
@@ -96,6 +99,14 @@ export default function App() {
                   onRefreshVendor={fetchAllData}
                   onDeleteVendor={handleDeleteVendor}
                   onNavigateToContagion={() => setActiveTab('contagion')}
+                />
+              )}
+
+              {activeTab === 'incidents' && (
+                <IncidentManager
+                  vendors={vendors}
+                  onSelectVendor={(id) => setSelectedVendorId(id)}
+                  onRefreshVendorData={fetchAllData}
                 />
               )}
 

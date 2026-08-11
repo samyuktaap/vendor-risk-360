@@ -86,41 +86,44 @@ def fetch_vendor_news(vendor_name: str, domain: str):
     try:
         query_str = f"{vendor_name} cyberattack OR breach OR ransomware OR vulnerability"
         rss_url = f"https://news.google.com/rss/search?q={query_str}&hl=en-US&gl=US&ceid=US:en"
-        res = requests.get(rss_url, timeout=6, headers={"User-Agent": "Mozilla/5.0 VendorRisk360/1.0"})
+        res = requests.get(rss_url, timeout=5, headers={"User-Agent": "Mozilla/5.0 VendorRisk360/1.0"})
 
         if res.status_code == 200:
-            root = ET.fromstring(res.text)
-            items = root.findall('.//item')[:6]
+            try:
+                root = ET.fromstring(res.text)
+                items = root.findall('.//item')[:6]
 
-            live_articles = []
-            for item in items:
-                title_elem = item.find('title')
-                link_elem = item.find('link')
-                pub_elem = item.find('pubDate')
-                source_elem = item.find('source')
+                live_articles = []
+                for item in items:
+                    title_elem = item.find('title')
+                    link_elem = item.find('link')
+                    pub_elem = item.find('pubDate')
+                    source_elem = item.find('source')
 
-                title = title_elem.text if title_elem is not None else "Cyber Security Advisory"
-                url = link_elem.text if link_elem is not None else "#"
-                pub_date = pub_elem.text if pub_elem is not None else datetime.utcnow().isoformat()
-                source_name = source_elem.text if source_elem is not None else "Google News Security"
+                    title = title_elem.text if (title_elem is not None and title_elem.text) else "Cyber Security Advisory"
+                    url = link_elem.text if (link_elem is not None and link_elem.text) else "#"
+                    pub_date = pub_elem.text if (pub_elem is not None and pub_elem.text) else datetime.utcnow().isoformat()
+                    source_name = source_elem.text if (source_elem is not None and source_elem.text) else "Google News Security"
 
-                live_articles.append({
-                    "title": title,
-                    "source": source_name,
-                    "url": url,
-                    "published_at": pub_date,
-                    "snippet": title
-                })
+                    live_articles.append({
+                        "title": title,
+                        "source": source_name,
+                        "url": url,
+                        "published_at": pub_date,
+                        "snippet": title
+                    })
 
-            news_score, flagged = analyze_news_sentiment(live_articles)
-            result = {
-                "source": "Live Google News Incident Feed",
-                "news_score": news_score,
-                "articles": flagged,
-                "article_count": len(flagged)
-            }
-            set_cached_response(cache_key, result, ttl_minutes=60)
-            return result
+                news_score, flagged = analyze_news_sentiment(live_articles)
+                result = {
+                    "source": "Live Google News Incident Feed",
+                    "news_score": news_score,
+                    "articles": flagged,
+                    "article_count": len(flagged)
+                }
+                set_cached_response(cache_key, result, ttl_minutes=60)
+                return result
+            except ET.ParseError as pe:
+                print(f"[News RSS XML Parse Error for {vendor_name}] {pe}")
     except Exception as e:
         print(f"[Live News RSS Error for {vendor_name}] {e}")
 

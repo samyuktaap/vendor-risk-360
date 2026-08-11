@@ -7,17 +7,20 @@ import {
   Activity, 
   Gauge, 
   Plus,
-  Radio
+  Radio,
+  Flame
 } from 'lucide-react';
 
-export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criticalCount }) {
+export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criticalCount, activeIncidentsCount = 0 }) {
   const navItems = [
     { id: 'overview', label: 'Overview Dashboard', icon: LayoutDashboard },
+    { id: 'incidents', label: 'Incident Center', icon: Flame, badge: activeIncidentsCount > 0 ? `${activeIncidentsCount} Active` : null },
     { id: 'contagion', label: 'Risk Contagion Map', icon: Network, badge: criticalCount > 0 ? `${criticalCount} Critical` : null },
     { id: 'vendors', label: 'Monitored Vendors', icon: Building2 },
     { id: 'feed', label: 'Live Activity Stream', icon: Activity },
     { id: 'quota', label: 'API Quota Debugger', icon: Gauge },
   ];
+
 
   return (
     <aside className="w-64 bg-[#0d131f] border-r border-slate-800/80 flex flex-col justify-between h-screen sticky top-0 z-30 select-none">

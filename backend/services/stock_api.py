@@ -3,25 +3,56 @@ import requests
 from database import get_cached_response, set_cached_response, record_api_call
 
 VENDOR_TICKERS = {
+    # Security & Identity
     "okta.com": "OKTA",
     "crowdstrike.com": "CRWD",
-    "snowflake.com": "SNOW",
-    "slack.com": "CRM",
-    "microsoft.com": "MSFT",
-    "amazon.com": "AMZN",
-    "google.com": "GOOGL",
-    "datadoghq.com": "DDOG",
-    "cloudflare.com": "NET",
     "paloaltonetworks.com": "PANW",
+    "sentinelone.com": "S",
+    "zscaler.com": "ZS",
+    "sailpoint.com": "SAIL",
+    "beyondtrust.com": None,
+    # Cloud & Data
+    "snowflake.com": "SNOW",
+    "databricks.com": None,
+    "aws.amazon.com": "AMZN",
+    "amazon.com": "AMZN",
+    "azure.microsoft.com": "MSFT",
+    "microsoft.com": "MSFT",
+    "cloud.google.com": "GOOGL",
+    "google.com": "GOOGL",
+    "oracle.com": "ORCL",
+    "sap.com": "SAP",
+    # Networking & CDN
+    "cloudflare.com": "NET",
+    "akamai.com": "AKAM",
+    "fastly.com": "FSLY",
+    # Observability & DevOps
+    "datadoghq.com": "DDOG",
+    "newrelic.com": "NR",
+    "splunk.com": "SPLK",
+    "dynatrace.com": "DT",
+    # Collaboration & Productivity
+    "slack.com": "CRM",
     "atlassian.com": "TEAM",
-    "cisco.com": "CSCO"
+    "zoom.us": "ZM",
+    "dropbox.com": "DBX",
+    "box.com": "BOX",
+    # Networking
+    "cisco.com": "CSCO",
+    "fortinet.com": "FTNT",
+    "juniper.net": "JNPR",
+    # Payments & Finance
+    "stripe.com": None,
+    "paypal.com": "PYPL",
+    "twilio.com": "TWLO",
+    "sendgrid.com": "TWLO",
 }
 
-def fetch_vendor_stock_risk(domain: str, vendor_name: str):
-    ticker = VENDOR_TICKERS.get(domain.lower(), None)
+def fetch_vendor_stock_risk(domain: str, vendor_name: str, custom_ticker: str = None):
+    ticker = custom_ticker.upper().strip() if (custom_ticker and custom_ticker.strip()) else VENDOR_TICKERS.get(domain.lower(), None)
     alpha_key = os.getenv("ALPHA_VANTAGE_API_KEY", "").strip()
 
-    cache_key = f"stock_{domain.lower().replace('.', '_')}"
+    cache_key = f"stock_{domain.lower().replace('.', '_')}_{ticker or 'none'}"
     cached = get_cached_response(cache_key)
     if cached:
         return cached
@@ -66,37 +97,39 @@ def fetch_vendor_stock_risk(domain: str, vendor_name: str):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2d"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VendorRisk360/1.0"}
-        res = requests.get(url, headers=headers, timeout=6)
+        res = requests.get(url, headers=headers, timeout=5)
 
         if res.status_code == 200:
             data = res.json()
-            meta = data["chart"]["result"][0]["meta"]
-            price = meta.get("regularMarketPrice", 0.0)
-            prev = meta.get("chartPreviousClose") or meta.get("previousClose") or price
+            chart_res = data.get("chart", {}).get("result", [])
+            if chart_res and isinstance(chart_res, list) and len(chart_res) > 0:
+                meta = chart_res[0].get("meta", {})
+                price = float(meta.get("regularMarketPrice", 0.0) or 0.0)
+                prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or price or 0.0)
 
-            change_pct = round(((price - prev) / prev) * 100, 2) if prev else 0.0
+                change_pct = round(((price - prev) / prev) * 100, 2) if (prev and prev != 0.0) else 0.0
 
-            stock_risk_score = 0
-            if change_pct <= -8.0:
-                stock_risk_score = 90
-            elif change_pct <= -4.0:
-                stock_risk_score = 65
-            elif change_pct <= -1.5:
-                stock_risk_score = 35
-            elif change_pct >= 0:
                 stock_risk_score = 0
+                if change_pct <= -8.0:
+                    stock_risk_score = 90
+                elif change_pct <= -4.0:
+                    stock_risk_score = 65
+                elif change_pct <= -1.5:
+                    stock_risk_score = 35
+                elif change_pct >= 0:
+                    stock_risk_score = 0
 
-            result = {
-                "source": f"Yahoo Finance Live Ticker Feed (${ticker})",
-                "ticker": ticker,
-                "is_public_company": True,
-                "current_price": price,
-                "change_pct": change_pct,
-                "stock_risk_score": stock_risk_score,
-                "status": "ELEVATED_VOLATILITY" if change_pct <= -4.0 else "STABLE"
-            }
-            set_cached_response(cache_key, result, ttl_minutes=15)
-            return result
+                result = {
+                    "source": f"Yahoo Finance Live Ticker Feed (${ticker})",
+                    "ticker": ticker,
+                    "is_public_company": True,
+                    "current_price": price,
+                    "change_pct": change_pct,
+                    "stock_risk_score": stock_risk_score,
+                    "status": "ELEVATED_VOLATILITY" if change_pct <= -4.0 else "STABLE"
+                }
+                set_cached_response(cache_key, result, ttl_minutes=15)
+                return result
     except Exception as e:
         print(f"[Live Stock API Error for {ticker}] {e}")
 

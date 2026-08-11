@@ -3,23 +3,20 @@ import socket
 import requests
 from database import get_cached_response, set_cached_response
 
-IPINFO_API_KEY = os.getenv("IPINFO_API_KEY", "620b2c73fa9ee1")
+def get_api_key():
+    return os.getenv("IPINFO_API_KEY", "").strip() or "620b2c73fa9ee1"
 
-# High-risk countries/regions for hosting vendor infrastructure
 HIGH_RISK_COUNTRIES = {"CN", "RU", "KP", "IR", "BY", "SY", "CU"}
 MEDIUM_RISK_COUNTRIES = {"VN", "PK", "NG", "BD"}
-
-# Known cloud/CDN ASN prefixes (low risk)
 TRUSTED_ASNS = {"AS15169", "AS8075", "AS16509", "AS13335", "AS54113", "AS20940"}
 
-
 def resolve_domain_ip(domain: str) -> str | None:
-    """Resolve a domain name to its primary IPv4 address."""
+    """Resolve a domain name to its primary IPv4 address with timeout protection."""
     try:
+        socket.setdefaulttimeout(3.0)
         return socket.gethostbyname(domain)
-    except socket.gaierror:
+    except (socket.gaierror, socket.timeout, Exception):
         return None
-
 
 def probe_ip_intelligence(domain: str, vendor_name: str):
     """
@@ -45,18 +42,20 @@ def probe_ip_intelligence(domain: str, vendor_name: str):
             "risk_flags": ["Domain could not be resolved to an IP address"]
         }
 
+    api_key = get_api_key()
     try:
         url = f"https://ipinfo.io/{ip}/json"
-        headers = {"Authorization": f"Bearer {IPINFO_API_KEY}"}
+        headers = {"Authorization": f"Bearer {api_key}"}
         res = requests.get(url, headers=headers, timeout=5)
 
         if res.status_code == 200:
             data = res.json()
 
             country = data.get("country", "Unknown")
-            org = data.get("org", "")          # e.g. "AS15169 Google LLC"
-            asn = org.split(" ")[0] if org else None
-            org_name = " ".join(org.split(" ")[1:]) if org else "Unknown"
+            org = data.get("org", "") or ""
+            parts = org.split(" ") if org else []
+            asn = parts[0] if len(parts) > 0 and parts[0].startswith("AS") else None
+            org_name = " ".join(parts[1:]) if len(parts) > 1 else (org or "Unknown")
             city = data.get("city", "")
             region = data.get("region", "")
             hostname = data.get("hostname", "")

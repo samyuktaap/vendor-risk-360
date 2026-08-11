@@ -13,7 +13,8 @@ import {
   CheckCircle2,
   AlertOctagon,
   Trash2,
-  TrendingDown
+  TrendingDown,
+  Flame
 } from 'lucide-react';
 import RiskScoreRing from './RiskScoreRing';
 
@@ -63,9 +64,12 @@ export default function OverviewDashboard({
       const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/refresh`, { method: 'POST' });
       if (res.ok && onRefreshVendor) {
         onRefreshVendor();
+      } else {
+        alert("Unable to refresh vendor risk score at this time.");
       }
     } catch (err) {
       console.error(err);
+      alert("Network error: Unable to reach security risk engine.");
     } finally {
       setRefreshingId(null);
     }
@@ -218,6 +222,8 @@ export default function OverviewDashboard({
                 filteredVendors.map((vendor) => {
                   const isCritical = vendor.risk_score >= 70;
                   const isWatch = vendor.risk_score >= 40 && vendor.risk_score < 70;
+                  const hasCriticalIncident = vendor.critical_active > 0;
+                  const hasActiveIncident = vendor.active_incidents > 0;
 
                   return (
                     <tr
@@ -236,8 +242,13 @@ export default function OverviewDashboard({
                             {vendor.name.charAt(0)}
                           </div>
                           <div>
-                            <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors">
+                            <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors flex items-center gap-2">
                               {vendor.name}
+                              {hasCriticalIncident && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse" title="Active Critical Incident">
+                                  <Flame className="w-2.5 h-2.5" /> HAZARD
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
                               <span>{vendor.domain}</span>
@@ -263,6 +274,11 @@ export default function OverviewDashboard({
                           }`}>
                             {vendor.risk_score}
                           </span>
+                          {hasActiveIncident && (
+                            <span className="text-[9px] font-bold text-rose-400 mt-0.5 font-mono">
+                              +{vendor.incident_penalty} pts
+                            </span>
+                          )}
                           <span className="text-[9px] font-semibold text-slate-500 uppercase mt-0.5">/ 100 Score</span>
                         </div>
                       </td>

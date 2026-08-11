@@ -6,8 +6,12 @@ from datetime import datetime, timedelta
 DB_PATH = os.path.join(os.path.dirname(__file__), "vendor_risk.db")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10.0)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
     return conn
 
 def init_db():
@@ -26,10 +30,30 @@ def init_db():
             hibp_score INTEGER DEFAULT 0,
             news_score INTEGER DEFAULT 0,
             sanctions_score INTEGER DEFAULT 0,
+            abuse_score INTEGER DEFAULT 0,
+            criticality_tier TEXT DEFAULT 'Tier 2 - Business Operational',
+            data_sensitivity TEXT DEFAULT 'Public Data',
+            contract_value INTEGER DEFAULT 0,
+            custom_ticker TEXT,
+            compliance_certs TEXT DEFAULT 'SOC2 Type II',
             last_checked_at TEXT,
             created_at TEXT NOT NULL
         )
     """)
+
+    # Column migrations for existing SQLite DB files
+    for col_def in [
+        "abuse_score INTEGER DEFAULT 0",
+        "criticality_tier TEXT DEFAULT 'Tier 2 - Business Operational'",
+        "data_sensitivity TEXT DEFAULT 'Public Data'",
+        "contract_value INTEGER DEFAULT 0",
+        "custom_ticker TEXT",
+        "compliance_certs TEXT DEFAULT 'SOC2 Type II'"
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE vendors ADD COLUMN {col_def}")
+        except Exception:
+            pass  # Column already exists
 
     # Risk Events Table (Feed)
     cursor.execute("""
@@ -54,6 +78,7 @@ def init_db():
             vendor_id INTEGER NOT NULL,
             title TEXT NOT NULL,
             description TEXT,
+            category TEXT DEFAULT 'Security Breach',
             severity TEXT NOT NULL DEFAULT 'MEDIUM',
             status TEXT NOT NULL DEFAULT 'OPEN',
             score_impact INTEGER DEFAULT 0,
@@ -62,6 +87,49 @@ def init_db():
             FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
         )
     """)
+
+    # Compliance Frameworks Table (VendorAuditAI-inspired)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS compliance_frameworks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            framework_name TEXT NOT NULL,
+            framework_type TEXT NOT NULL,
+            compliance_score INTEGER DEFAULT 0,
+            last_assessed_at TEXT,
+            next_due_at TEXT,
+            status TEXT DEFAULT 'NOT_ASSESSED',
+            document_path TEXT,
+            gaps_identified INTEGER DEFAULT 0,
+            controls_passed INTEGER DEFAULT 0,
+            controls_total INTEGER DEFAULT 0,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
+        )
+    """)
+
+    # Remediation Tasks Table (VendorAuditAI-inspired)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS remediation_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            priority TEXT NOT NULL DEFAULT 'MEDIUM',
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            assigned_to TEXT,
+            due_date TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT,
+            source_type TEXT DEFAULT 'MANUAL',
+            source_reference INTEGER,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
+        )
+    """)
+
+    try:
+        cursor.execute("ALTER TABLE incidents ADD COLUMN category TEXT DEFAULT 'Security Breach'")
+    except Exception:
+        pass
 
     # API Cache Table
     cursor.execute("""
@@ -85,6 +153,290 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+# Incident Database Operations
+SEVERITY_SCORES = {
+    "CRITICAL": 25,
+    "HIGH": 15,
+    "MEDIUM": 8,
+    "LOW": 4
+}
+
+def calculate_incident_impact(severity: str, status: str, reported_at: str = None) -> int:
+    if status.upper() in ["RESOLVED", "MITIGATED"]:
+        return 0
+    
+    base_impact = SEVERITY_SCORES.get(severity.upper(), 8)
+    
+    # Incident aging: reduce impact for older open incidents (graceful degradation)
+    if reported_at:
+        try:
+            reported_date = datetime.fromisoformat(reported_at.replace('Z', '+00:00'))
+            days_open = (datetime.utcnow() - reported_date).days
+            
+            # Reduce impact by 10% for every 30 days open, max 50% reduction
+            if days_open > 30:
+                aging_factor = max(0.5, 1 - (days_open // 30) * 0.1)
+                return int(base_impact * aging_factor)
+        except Exception:
+            pass
+    
+    return base_impact
+
+def add_incident(vendor_id: int, title: str, description: str, category: str, severity: str, status: str = "OPEN"):
+    conn = get_db()
+    cursor = conn.cursor()
+    impact = calculate_incident_impact(severity, status)
+    now = datetime.utcnow().isoformat()
+    resolved_at = now if status.upper() in ["RESOLVED", "MITIGATED"] else None
+    
+    cursor.execute("""
+        INSERT INTO incidents (vendor_id, title, description, category, severity, status, score_impact, reported_at, resolved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (vendor_id, title, description, category, severity.upper(), status.upper(), impact, now, resolved_at))
+    conn.commit()
+    incident_id = cursor.lastrowid
+    conn.close()
+    return incident_id
+
+def get_incidents(vendor_id: int = None):
+    conn = get_db()
+    cursor = conn.cursor()
+    if vendor_id:
+        cursor.execute("""
+            SELECT i.*, v.name as vendor_name, v.domain as vendor_domain 
+            FROM incidents i
+            JOIN vendors v ON i.vendor_id = v.id
+            WHERE i.vendor_id = ?
+            ORDER BY i.id DESC
+        """, (vendor_id,))
+    else:
+        cursor.execute("""
+            SELECT i.*, v.name as vendor_name, v.domain as vendor_domain 
+            FROM incidents i
+            JOIN vendors v ON i.vendor_id = v.id
+            ORDER BY i.id DESC
+        """)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def update_incident_status(incident_id: int, status: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT severity, reported_at FROM incidents WHERE id = ?", (incident_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    severity = row["severity"]
+    reported_at = row["reported_at"]
+    impact = calculate_incident_impact(severity, status, reported_at)
+    resolved_at = datetime.utcnow().isoformat() if status.upper() in ["RESOLVED", "MITIGATED"] else None
+    
+    cursor.execute("""
+        UPDATE incidents 
+        SET status = ?, score_impact = ?, resolved_at = ?
+        WHERE id = ?
+    """, (status.upper(), impact, resolved_at, incident_id))
+    conn.commit()
+    conn.close()
+    return True
+
+def delete_incident(incident_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
+    conn.commit()
+    conn.close()
+
+def get_vendor_incident_score_impact(vendor_id: int) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            SUM(score_impact) as total_impact,
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status IN ('OPEN', 'INVESTIGATING') THEN 1 ELSE 0 END) as active_incidents,
+            SUM(CASE WHEN severity = 'CRITICAL' AND status IN ('OPEN', 'INVESTIGATING') THEN 1 ELSE 0 END) as critical_active
+        FROM incidents
+        WHERE vendor_id = ?
+    """, (vendor_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    total_impact = row["total_impact"] if row and row["total_impact"] else 0
+    return {
+        "total_impact": total_impact,
+        "total_incidents": row["total_incidents"] if row and row["total_incidents"] else 0,
+        "active_incidents": row["active_incidents"] if row and row["active_incidents"] else 0,
+        "critical_active": row["critical_active"] if row and row["critical_active"] else 0
+    }
+
+def recalculate_all_incident_impacts():
+    """Recalculate score_impact for all open incidents to account for aging."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, severity, status, reported_at FROM incidents WHERE status IN ('OPEN', 'INVESTIGATING')")
+    rows = cursor.fetchall()
+    
+    updated_count = 0
+    for row in rows:
+        incident_id = row["id"]
+        severity = row["severity"]
+        status = row["status"]
+        reported_at = row["reported_at"]
+        
+        new_impact = calculate_incident_impact(severity, status, reported_at)
+        cursor.execute("UPDATE incidents SET score_impact = ? WHERE id = ?", (new_impact, incident_id))
+        updated_count += 1
+    
+    conn.commit()
+    conn.close()
+    return updated_count
+
+# Compliance Framework Database Operations (VendorAuditAI-inspired)
+COMPLIANCE_FRAMEWORKS = [
+    "SOC 2 Type II",
+    "SOC 2 Type I", 
+    "ISO 27001",
+    "NIST CSF",
+    "NIST 800-53",
+    "PCI DSS",
+    "HIPAA",
+    "GDPR",
+    "DORA",
+    "SIG",
+    "CAIQ",
+    "CMMC"
+]
+
+def add_compliance_framework(vendor_id: int, framework_name: str, framework_type: str, compliance_score: int = 0, document_path: str = None):
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    
+    # Calculate next due date (1 year from now)
+    from datetime import timedelta
+    next_due = (datetime.utcnow() + timedelta(days=365)).isoformat()
+    
+    cursor.execute("""
+        INSERT INTO compliance_frameworks (vendor_id, framework_name, framework_type, compliance_score, last_assessed_at, next_due_at, status, document_path)
+        VALUES (?, ?, ?, ?, ?, ?, 'ASSESSED', ?)
+    """, (vendor_id, framework_name, framework_type, compliance_score, now, next_due, document_path))
+    conn.commit()
+    framework_id = cursor.lastrowid
+    conn.close()
+    return framework_id
+
+def get_vendor_compliance_frameworks(vendor_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM compliance_frameworks 
+        WHERE vendor_id = ? 
+        ORDER BY last_assessed_at DESC
+    """, (vendor_id,))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def update_compliance_framework(framework_id: int, compliance_score: int, gaps_identified: int, controls_passed: int, controls_total: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    
+    from datetime import timedelta
+    next_due = (datetime.utcnow() + timedelta(days=365)).isoformat()
+    
+    cursor.execute("""
+        UPDATE compliance_frameworks 
+        SET compliance_score = ?, gaps_identified = ?, controls_passed = ?, controls_total = ?, 
+            last_assessed_at = ?, next_due_at = ?, status = 'ASSESSED'
+        WHERE id = ?
+    """, (compliance_score, gaps_identified, controls_passed, controls_total, now, next_due, framework_id))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_compliance_summary():
+    """Get overall compliance statistics across all vendors."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            framework_name,
+            COUNT(*) as vendor_count,
+            AVG(compliance_score) as avg_score,
+            SUM(CASE WHEN status = 'ASSESSED' THEN 1 ELSE 0 END) as assessed_count,
+            SUM(CASE WHEN next_due_at < datetime('now') THEN 1 ELSE 0 END) as overdue_count
+        FROM compliance_frameworks
+        GROUP BY framework_name
+    """)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+# Remediation Task Database Operations (VendorAuditAI-inspired)
+def create_remediation_task(vendor_id: int, title: str, description: str, priority: str = "MEDIUM", assigned_to: str = None, due_date: str = None, source_type: str = "MANUAL", source_reference: int = None):
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    
+    cursor.execute("""
+        INSERT INTO remediation_tasks (vendor_id, title, description, priority, assigned_to, due_date, created_at, source_type, source_reference)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (vendor_id, title, description, priority.upper(), assigned_to, due_date, now, source_type, source_reference))
+    conn.commit()
+    task_id = cursor.lastrowid
+    conn.close()
+    return task_id
+
+def get_vendor_remediation_tasks(vendor_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM remediation_tasks 
+        WHERE vendor_id = ? 
+        ORDER BY priority DESC, due_date ASC
+    """, (vendor_id,))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def update_remediation_task(task_id: int, status: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    completed_at = datetime.utcnow().isoformat() if status.upper() in ["COMPLETED", "CLOSED"] else None
+    
+    cursor.execute("""
+        UPDATE remediation_tasks 
+        SET status = ?, completed_at = ?
+        WHERE id = ?
+    """, (status.upper(), completed_at, task_id))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_remediation_summary():
+    """Get overall remediation task statistics."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            priority,
+            COUNT(*) as task_count,
+            SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_count,
+            SUM(CASE WHEN status = 'IN_PROGRESS' THEN 1 ELSE 0 END) as in_progress_count,
+            SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_count,
+            SUM(CASE WHEN due_date < datetime('now') AND status NOT IN ('COMPLETED', 'CLOSED') THEN 1 ELSE 0 END) as overdue_count
+        FROM remediation_tasks
+        GROUP BY priority
+    """)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
 
 # Quota Budgeting & Circuit Breaker Helpers
 DAILY_LIMITS = {
