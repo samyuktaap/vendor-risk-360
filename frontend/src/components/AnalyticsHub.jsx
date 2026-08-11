@@ -6,7 +6,6 @@ import {
   Award, 
   CheckSquare, 
   Activity,
-  PieChart,
   Calendar,
   Download,
   Filter,
@@ -15,7 +14,7 @@ import {
   AlertTriangle,
   CheckCircle2
 } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart as Pie, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart as RechartsPieChart, Pie as RechartsPie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -201,8 +200,8 @@ export default function AnalyticsHub({ vendors }) {
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
+              <RechartsPieChart>
+                <RechartsPie
                   data={complianceData}
                   cx="50%"
                   cy="50%"
@@ -214,12 +213,12 @@ export default function AnalyticsHub({ vendors }) {
                   {complianceData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
-                </Pie>
+                </RechartsPie>
                 <Tooltip
                   contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', fontSize: '11px' }}
                   labelStyle={{ color: '#94a3b8' }}
                 />
-              </PieChart>
+              </RechartsPieChart>
             </ResponsiveContainer>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
@@ -236,7 +235,7 @@ export default function AnalyticsHub({ vendors }) {
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-              <PieChart className="w-4 h-4 text-rose-400" />
+              <BarChart3 className="w-4 h-4 text-rose-400" />
               Risk Distribution
             </h3>
             <span className="text-[10px] text-slate-500">By tier</span>
