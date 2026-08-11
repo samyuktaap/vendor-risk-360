@@ -9,6 +9,10 @@ import DevQuotaDrawer from './components/DevQuotaDrawer';
 import VendorDetailModal from './components/VendorDetailModal';
 import AddVendorModal from './components/AddVendorModal';
 import IncidentManager from './components/IncidentManager';
+import ComplianceManager from './components/ComplianceManager';
+import RemediationManager from './components/RemediationManager';
+import AnalyticsHub from './components/AnalyticsHub';
+import DocumentManager from './components/DocumentManager';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -107,6 +111,30 @@ export default function App() {
                   vendors={vendors}
                   onSelectVendor={(id) => setSelectedVendorId(id)}
                   onRefreshVendorData={fetchAllData}
+                />
+              )}
+
+              {activeTab === 'compliance' && (
+                <ComplianceManager
+                  vendors={vendors}
+                />
+              )}
+
+              {activeTab === 'remediation' && (
+                <RemediationManager
+                  vendors={vendors}
+                />
+              )}
+
+              {activeTab === 'analytics' && (
+                <AnalyticsHub
+                  vendors={vendors}
+                />
+              )}
+
+              {activeTab === 'documents' && (
+                <DocumentManager
+                  vendors={vendors}
                 />
               )}
 

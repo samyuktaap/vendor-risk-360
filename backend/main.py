@@ -605,3 +605,91 @@ def recalculate_incident_aging():
         "vendors_updated": len(vendors)
     }
 
+# Compliance Framework API Endpoints (VendorAuditAI-inspired)
+
+@app.get("/api/compliance/frameworks")
+def list_compliance_frameworks():
+    """Get list of available compliance frameworks."""
+    return {"frameworks": COMPLIANCE_FRAMEWORKS}
+
+@app.get("/api/vendors/{vendor_id}/compliance")
+def get_vendor_compliance(vendor_id: int):
+    """Get compliance frameworks for a specific vendor."""
+    frameworks = get_vendor_compliance_frameworks(vendor_id)
+    return {"frameworks": frameworks}
+
+@app.post("/api/vendors/{vendor_id}/compliance", status_code=201)
+def add_vendor_compliance(vendor_id: int, payload: ComplianceFrameworkCreate):
+    """Add a compliance framework assessment for a vendor."""
+    framework_id = add_compliance_framework(
+        vendor_id=vendor_id,
+        framework_name=payload.framework_name,
+        framework_type=payload.framework_type,
+        compliance_score=payload.compliance_score,
+        document_path=payload.document_path
+    )
+    return {
+        "id": framework_id,
+        "message": f"Compliance framework {payload.framework_name} added for vendor."
+    }
+
+@app.patch("/api/compliance/{framework_id}")
+def update_compliance(framework_id: int, payload: ComplianceFrameworkUpdate):
+    """Update compliance framework assessment results."""
+    success = update_compliance_framework(
+        framework_id=framework_id,
+        compliance_score=payload.compliance_score,
+        gaps_identified=payload.gaps_identified,
+        controls_passed=payload.controls_passed,
+        controls_total=payload.controls_total
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Compliance framework not found")
+    return {"message": "Compliance framework updated successfully."}
+
+@app.get("/api/compliance/summary")
+def get_compliance_stats():
+    """Get overall compliance statistics across all vendors."""
+    summary = get_compliance_summary()
+    return {"summary": summary}
+
+# Remediation Task API Endpoints (VendorAuditAI-inspired)
+
+@app.get("/api/vendors/{vendor_id}/remediation")
+def get_vendor_remediation(vendor_id: int):
+    """Get remediation tasks for a specific vendor."""
+    tasks = get_vendor_remediation_tasks(vendor_id)
+    return {"tasks": tasks}
+
+@app.post("/api/vendors/{vendor_id}/remediation", status_code=201)
+def create_remediation(vendor_id: int, payload: RemediationTaskCreate):
+    """Create a remediation task for a vendor."""
+    task_id = create_remediation_task(
+        vendor_id=vendor_id,
+        title=payload.title,
+        description=payload.description,
+        priority=payload.priority,
+        assigned_to=payload.assigned_to,
+        due_date=payload.due_date,
+        source_type=payload.source_type,
+        source_reference=payload.source_reference
+    )
+    return {
+        "id": task_id,
+        "message": "Remediation task created successfully."
+    }
+
+@app.patch("/api/remediation/{task_id}")
+def update_remediation(task_id: int, payload: RemediationTaskUpdate):
+    """Update remediation task status."""
+    success = update_remediation_task(task_id=task_id, status=payload.status)
+    if not success:
+        raise HTTPException(status_code=404, detail="Remediation task not found")
+    return {"message": f"Remediation task status updated to {payload.status}."}
+
+@app.get("/api/remediation/summary")
+def get_remediation_stats():
+    """Get overall remediation task statistics."""
+    summary = get_remediation_summary()
+    return {"summary": summary}
+
