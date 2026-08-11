@@ -11,8 +11,9 @@ import AddVendorModal from './components/AddVendorModal';
 import IncidentManager from './components/IncidentManager';
 import ComplianceManager from './components/ComplianceManager';
 import RemediationManager from './components/RemediationManager';
-// import AnalyticsHub from './components/AnalyticsHub';
 import DocumentManager from './components/DocumentManager';
+import AuthModal from './components/AuthModal';
+import VendorSelfServicePortal from './components/VendorSelfServicePortal';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -23,12 +24,45 @@ export default function App() {
   const [contagion, setContagion] = useState(null);
   const [selectedVendorId, setSelectedVendorId] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+
+  // Active User Authentication State
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vendor_risk_user');
+      return saved ? JSON.parse(saved) : {
+        role: 'enterprise',
+        name: 'Sarah Jenkins',
+        title: 'Chief Information Security Officer (CISO)',
+        organization: 'Acme Enterprise',
+        email: 'ciso@acme-corp.com',
+        avatar: 'SJ'
+      };
+    } catch (e) {
+      return null;
+    }
+  });
 
   useEffect(() => {
     fetchAllData();
   }, []);
+
+  const handleLogin = (user) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem('vendor_risk_user', JSON.stringify(user));
+    } catch (e) {}
+  };
+
+  const handleSignOut = () => {
+    setCurrentUser(null);
+    try {
+      localStorage.removeItem('vendor_risk_user');
+    } catch (e) {}
+    setIsAuthModalOpen(true);
+  };
 
   const fetchAllData = async () => {
     try {
@@ -65,6 +99,24 @@ export default function App() {
     }
   };
 
+  // Dedicated View for Vendor Self-Service Login
+  if (currentUser && currentUser.role === 'vendor') {
+    return (
+      <>
+        <VendorSelfServicePortal
+          user={currentUser}
+          onSignOut={handleSignOut}
+        />
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
+          onLogin={handleLogin}
+          vendors={vendors}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 flex font-sans antialiased">
       {/* Navigation Sidebar */}
@@ -84,6 +136,9 @@ export default function App() {
           setSearchQuery={setSearchQuery}
           criticalVendors={criticalVendors}
           onSelectVendor={(id) => setSelectedVendorId(id)}
+          currentUser={currentUser}
+          onOpenAuth={() => setIsAuthModalOpen(true)}
+          onSignOut={handleSignOut}
         />
 
         {/* View Content */}
@@ -125,12 +180,6 @@ export default function App() {
                   vendors={vendors}
                 />
               )}
-
-              {/* {activeTab === 'analytics' && (
-                <AnalyticsHub
-                  vendors={vendors}
-                />
-              )} */}
 
               {activeTab === 'documents' && (
                 <DocumentManager
@@ -187,6 +236,14 @@ export default function App() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onVendorAdded={fetchAllData}
+      />
+
+      {/* Auth Sign In Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onLogin={handleLogin}
+        vendors={vendors}
       />
     </div>
   );

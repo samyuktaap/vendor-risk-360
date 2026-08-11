@@ -7,7 +7,10 @@ import {
   Sparkles, 
   X, 
   ChevronDown,
-  AlertTriangle
+  AlertTriangle,
+  User,
+  LogIn,
+  LogOut
 } from 'lucide-react';
 
 export default function Header({ 
@@ -15,7 +18,10 @@ export default function Header({
   setSearchQuery, 
   criticalVendors = [], 
   onSelectVendor, 
-  quotaStats 
+  quotaStats,
+  currentUser,
+  onOpenAuth,
+  onSignOut
 }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const criticalCount = criticalVendors.length;
@@ -26,7 +32,9 @@ export default function Header({
       <div className="flex items-center gap-4 flex-1 max-w-xl">
         <div className="flex items-center gap-2 bg-[#070a12] border border-emerald-900/30 rounded-xl px-3 py-1.5 text-xs text-slate-300">
           <Building className="w-3.5 h-3.5 text-[#00f090]" />
-          <span className="font-semibold text-slate-200">Acme Enterprise</span>
+          <span className="font-semibold text-slate-200">
+            {currentUser?.role === 'vendor' ? currentUser.name : 'Acme Enterprise'}
+          </span>
           <ChevronDown className="w-3 h-3 text-slate-500" />
         </div>
 
@@ -51,7 +59,7 @@ export default function Header({
       </div>
 
       {/* Right Toolbar */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         {/* Live API Radar Active Badge */}
         <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-full text-[11px] text-[#00f090] font-semibold shadow-sm">
           <span className="w-2 h-2 rounded-full bg-[#00f090] animate-ping"></span>
@@ -119,7 +127,38 @@ export default function Header({
             </div>
           )}
         </div>
+
+        {/* User Account / Auth Profile Button */}
+        {currentUser ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenAuth}
+              className="flex items-center gap-2 pl-2 pr-3 py-1 bg-slate-900 border border-slate-700 hover:border-emerald-500/40 rounded-xl text-xs transition-all"
+            >
+              <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-300 font-bold flex items-center justify-center text-[10px]">
+                {currentUser.avatar || 'U'}
+              </div>
+              <div className="text-left hidden sm:block">
+                <div className="font-bold text-slate-100 text-[11px] leading-tight truncate max-w-[100px]">
+                  {currentUser.name}
+                </div>
+                <div className="text-[9px] text-slate-400 leading-tight">
+                  {currentUser.role === 'enterprise' ? 'CISO Admin' : 'Vendor Portal'}
+                </div>
+              </div>
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={onOpenAuth}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-950/30 transition-all"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Sign In</span>
+          </button>
+        )}
       </div>
     </header>
   );
 }
+
