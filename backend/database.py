@@ -45,6 +45,20 @@ def init_db():
         )
     """)
 
+    # Sub-Vendors (4th-Party Vendor-of-Vendor Supply Chain)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sub_vendors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_vendor_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            sector TEXT DEFAULT 'Sub-Tier Supplier',
+            risk_score INTEGER DEFAULT 25,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (parent_vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
+        )
+    """)
+
     # Column migrations for existing SQLite DB files
     for col_def in [
         "email TEXT",
@@ -530,3 +544,34 @@ def set_cached_response(cache_key: str, data: dict, ttl_minutes: int = 60):
     """, (cache_key, json.dumps(data), expires_at))
     conn.commit()
     conn.close()
+
+# Sub-Vendor (4th-Party) Helpers
+def add_sub_vendor(parent_vendor_id: int, name: str, domain: str, sector: str = "Sub-Tier Supplier", risk_score: int = 25):
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        INSERT INTO sub_vendors (parent_vendor_id, name, domain, sector, risk_score, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (parent_vendor_id, name, domain, sector, risk_score, now))
+    sub_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return sub_id
+
+def get_sub_vendors(parent_vendor_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM sub_vendors WHERE parent_vendor_id = ? ORDER BY id DESC", (parent_vendor_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def delete_sub_vendor(sub_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM sub_vendors WHERE id = ?", (sub_id,))
+    conn.commit()
+    conn.close()
+    return True
+

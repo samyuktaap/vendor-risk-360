@@ -14,6 +14,7 @@ import RemediationManager from './components/RemediationManager';
 import DocumentManager from './components/DocumentManager';
 import AuthModal from './components/AuthModal';
 import VendorSelfServicePortal from './components/VendorSelfServicePortal';
+import VoiceGuidedDemoModal from './components/VoiceGuidedDemoModal';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -25,6 +26,7 @@ export default function App() {
   const [selectedVendorId, setSelectedVendorId] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isVoiceDemoOpen, setIsVoiceDemoOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -139,6 +141,7 @@ export default function App() {
           currentUser={currentUser}
           onOpenAuth={() => setIsAuthModalOpen(true)}
           onSignOut={handleSignOut}
+          onOpenVoiceDemo={() => setIsVoiceDemoOpen(true)}
         />
 
         {/* View Content */}
@@ -244,6 +247,12 @@ export default function App() {
         onClose={() => setIsAuthModalOpen(false)}
         onLogin={handleLogin}
         vendors={vendors}
+      />
+
+      {/* Voice-Guided Demo Modal */}
+      <VoiceGuidedDemoModal
+        isOpen={isVoiceDemoOpen}
+        onClose={() => setIsVoiceDemoOpen(false)}
       />
     </div>
   );

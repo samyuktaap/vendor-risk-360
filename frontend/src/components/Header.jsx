@@ -10,7 +10,8 @@ import {
   AlertTriangle,
   User,
   LogIn,
-  LogOut
+  LogOut,
+  Volume2
 } from 'lucide-react';
 
 export default function Header({ 
@@ -21,7 +22,8 @@ export default function Header({
   quotaStats,
   currentUser,
   onOpenAuth,
-  onSignOut
+  onSignOut,
+  onOpenVoiceDemo
 }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const criticalCount = criticalVendors.length;
@@ -60,6 +62,15 @@ export default function Header({
 
       {/* Right Toolbar */}
       <div className="flex items-center gap-3">
+        {/* 🔊 How It Works Voice Guided Demo Button */}
+        <button
+          onClick={onOpenVoiceDemo}
+          className="px-3 py-1 bg-gradient-to-r from-cyan-500/20 to-teal-500/20 hover:from-cyan-500/30 hover:to-teal-500/30 border border-cyan-500/40 rounded-full text-[11px] text-cyan-300 font-bold flex items-center gap-1.5 shadow-sm transition-all animate-pulse"
+        >
+          <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+          <span>How It Works (Voice Demo)</span>
+        </button>
+
         {/* Live API Radar Active Badge */}
         <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-full text-[11px] text-[#00f090] font-semibold shadow-sm">
           <span className="w-2 h-2 rounded-full bg-[#00f090] animate-ping"></span>

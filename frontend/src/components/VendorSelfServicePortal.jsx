@@ -17,7 +17,11 @@ import {
   Sparkles, 
   RefreshCw,
   Send,
-  MessageSquare
+  MessageSquare,
+  Plus,
+  Trash2,
+  Share2,
+  Check
 } from 'lucide-react';
 import RiskScoreRing from './RiskScoreRing';
 
@@ -27,12 +31,24 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
   const [incidents, setIncidents] = useState([]);
   const [remediations, setRemediations] = useState([]);
   const [compliance, setCompliance] = useState([]);
+  const [subVendors, setSubVendors] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // Modals state
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [subModalOpen, setSubModalOpen] = useState(false);
   const [newCert, setNewCert] = useState({ name: 'ISO 27001:2022', status: 'Compliant', validity: '2027-12-31' });
+  
+  // Sub-Vendor Form state
+  const [newSub, setNewSub] = useState({ name: '', domain: '', sector: 'Cloud Infrastructure' });
+  const [subError, setSubError] = useState('');
+  const [subVerifying, setSubVerifying] = useState(false);
+
+  // Q&A Messaging state
   const [message, setMessage] = useState('');
   const [messagesList, setMessagesList] = useState([
-    { sender: 'Enterprise CISO', text: 'Please upload updated SOC 2 Type II audit report for Q3.', timestamp: '10:15 AM' }
+    { sender: 'Enterprise CISO', text: 'Please upload updated SOC 2 Type II audit report for Q3.', timestamp: '10:15 AM' },
+    { sender: user.name, text: 'We have updated our SSL certs and DMARC enforcement.', timestamp: '10:20 AM' }
   ]);
 
   useEffect(() => {
@@ -44,12 +60,13 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
   const fetchVendorDetails = async () => {
     setLoading(true);
     try {
-      const [vRes, sRes, iRes, rRes, cRes] = await Promise.all([
+      const [vRes, sRes, iRes, rRes, cRes, subRes] = await Promise.all([
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/shap-risk`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/incidents`),
         fetch(`http://localhost:8000/api/remediation`),
-        fetch(`http://localhost:8000/api/compliance?vendor_id=${user.vendorId}`)
+        fetch(`http://localhost:8000/api/compliance?vendor_id=${user.vendorId}`),
+        fetch(`http://localhost:8000/api/vendors/${user.vendorId}/sub-vendors`)
       ]);
 
       if (vRes.ok) setVendorData(await vRes.json());
@@ -63,6 +80,7 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
         setRemediations((rJson || []).filter(item => item.vendor_id === user.vendorId));
       }
       if (cRes.ok) setCompliance(await cRes.json());
+      if (subRes.ok) setSubVendors(await subRes.json());
     } catch (err) {
       console.error("Error fetching vendor portal details:", err);
     } finally {
@@ -91,6 +109,43 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
       evidence_document: `${newCert.name.replace(/\s+/g, '_')}_Audit.pdf`
     }]);
     setUploadModalOpen(false);
+  };
+
+  const handleAddSubVendor = async (e) => {
+    e.preventDefault();
+    if (!newSub.name.trim() || !newSub.domain.trim()) return;
+    setSubVerifying(true);
+    setSubError('');
+
+    try {
+      const res = await fetch(`http://localhost:8000/api/vendors/${user.vendorId}/sub-vendors`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSub)
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        setSubModalOpen(false);
+        setNewSub({ name: '', domain: '', sector: 'Cloud Infrastructure' });
+        await fetchVendorDetails();
+      } else {
+        setSubError(data.detail || "Sub-vendor domain verification failed.");
+      }
+    } catch (err) {
+      setSubError("Failed to connect to verification server.");
+    } finally {
+      setSubVerifying(false);
+    }
+  };
+
+  const handleDeleteSubVendor = async (subId) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/sub-vendors/${subId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setSubVendors(subVendors.filter(s => s.id !== subId));
+      }
+    } catch (err) { console.error(err); }
   };
 
   const v = vendorData?.vendor;
@@ -141,11 +196,11 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
 
       {loading ? (
         <div className="flex items-center justify-center h-64 text-slate-400 text-sm">
-          Loading Vendor Security Assessment & Compliance Data...
+          Loading Vendor Security Assessment & Sub-Vendor Supply Chain...
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Column 1 & 2: Risk Score & SHAP Breakdown */}
+          {/* Column 1 & 2: Risk Score, SHAP & 4th-Party Sub-Vendors */}
           <div className="lg:col-span-2 space-y-6">
             {/* Live Risk Score Card */}
             <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 shadow-xl flex items-center justify-between">
@@ -237,6 +292,74 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
                 </div>
               </div>
             )}
+
+            {/* 🕸️ 4th-Party Sub-Vendors (My Upstream Suppliers) */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Share2 className="w-5 h-5 text-cyan-400" />
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-100">My Upstream Suppliers (4th-Party Risk)</h3>
+                    <p className="text-[10px] text-slate-400">Add & monitor sub-vendors that supply technology or services to {user.name}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setSubModalOpen(true);
+                    setSubError('');
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Sub-Supplier
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {subVendors.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-slate-500 border border-dashed border-slate-800 rounded-2xl">
+                    No upstream sub-vendors listed. Click 'Add Sub-Supplier' to track your suppliers' security posture.
+                  </div>
+                ) : (
+                  subVendors.map((sub) => (
+                    <div key={sub.id} className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between hover:border-slate-700 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center font-bold text-xs text-cyan-400">
+                          {sub.name.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-bold text-xs text-slate-100">{sub.name}</div>
+                          <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                            <span>{sub.domain}</span>
+                            <span>•</span>
+                            <span>{sub.sector}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="text-[10px] text-slate-500 uppercase tracking-wider">Sub-Tier Risk</div>
+                          <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${
+                            sub.risk_score >= 70 ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' :
+                            sub.risk_score >= 40 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                            'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          }`}>
+                            Score {sub.risk_score} / 100
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteSubVendor(sub.id)}
+                          className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors"
+                          title="Remove sub-supplier"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
 
             {/* Compliance Certificates */}
             <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
@@ -412,6 +535,85 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
                   className="flex-1 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold hover:bg-cyan-400"
                 >
                   Upload & Verify
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Sub-Vendor Modal with Domain Verification */}
+      {subModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Plus className="w-5 h-5 text-cyan-400" /> Add Upstream Sub-Supplier (4th Party)
+            </h3>
+
+            {subError && (
+              <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/40 text-rose-300 text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                <span>{subError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddSubVendor} className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Sub-Supplier Name</label>
+                <input
+                  type="text"
+                  value={newSub.name}
+                  onChange={(e) => setNewSub({ ...newSub, name: e.target.value })}
+                  placeholder="e.g. Amazon Web Services"
+                  required
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Domain Name (Domain Verification Active)</label>
+                <input
+                  type="text"
+                  value={newSub.domain}
+                  onChange={(e) => setNewSub({ ...newSub, domain: e.target.value })}
+                  placeholder="aws.amazon.com"
+                  required
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Domain must exist with active public DNS or HTTPS web server.</p>
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Industry Sector</label>
+                <input
+                  type="text"
+                  value={newSub.sector}
+                  onChange={(e) => setNewSub({ ...newSub, sector: e.target.value })}
+                  placeholder="Cloud Infrastructure"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSubModalOpen(false)}
+                  className="flex-1 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={subVerifying}
+                  className="flex-1 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 font-bold transition-all flex items-center justify-center gap-1.5"
+                >
+                  {subVerifying ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Verifying Domain...
+                    </>
+                  ) : (
+                    'Verify & Add Supplier'
+                  )}
                 </button>
               </div>
             </form>

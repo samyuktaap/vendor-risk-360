@@ -391,9 +391,9 @@ export default function AddVendorModal({ isOpen, onClose, onVendorAdded }) {
             <button type="submit" disabled={submitting}
               className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-950/50 disabled:opacity-50 transition-all">
               {submitting ? (
-                <><RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" /><span>Evaluating Live Vendor APIs...</span></>
+                <><RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" /><span>Verifying Domain &amp; Scoring Live Risk...</span></>
               ) : (
-                <><Plus className="w-4 h-4 stroke-[3]" /><span>Calculate Risk &amp; Onboard</span></>
+                <><Plus className="w-4 h-4 stroke-[3]" /><span>Verify Domain &amp; Onboard</span></>
               )}
             </button>
           </div>

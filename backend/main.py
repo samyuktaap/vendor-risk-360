@@ -11,11 +11,14 @@ from database import (
     get_vendor_incident_score_impact, calculate_incident_impact, recalculate_all_incident_impacts,
     add_compliance_framework, get_vendor_compliance_frameworks, update_compliance_framework, get_compliance_summary,
     create_remediation_task, get_vendor_remediation_tasks, update_remediation_task, get_remediation_summary,
+    add_sub_vendor, get_sub_vendors, delete_sub_vendor,
     COMPLIANCE_FRAMEWORKS
 )
 from seed_data import seed_database
 from services.risk_engine import compute_vendor_risk_score
 from services.mlRiskService import calculate_shap_vendor_risk
+from services.domainVerificationService import verify_vendor_existence
+
 
 app = FastAPI(title="VendorRisk 360 API", version="1.0.0")
 
@@ -151,6 +154,15 @@ def add_vendor(vendor: VendorCreate):
     if cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail=f"Vendor with domain '{domain_clean}' already exists.")
+
+    # Execute Multi-Probe Domain Existence Verification (DNS + HTTPS + Syntax)
+    verification = verify_vendor_existence(domain_clean)
+    if not verification["is_valid"]:
+        conn.close()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Vendor Domain Verification Failed: {verification['message']}"
+        )
 
     # Compute 100% live risk score across all vectors
     try:
@@ -748,7 +760,40 @@ def get_remediation_stats():
     summary = get_remediation_summary()
     return {"summary": summary}
 
+# 4th-Party Sub-Vendor Supply Chain Endpoints
+class SubVendorCreate(BaseModel):
+    name: str = Field(..., example="AWS Cloud Hosting")
+    domain: str = Field(..., example="aws.amazon.com")
+    sector: Optional[str] = Field(default="Sub-Tier Supplier", example="Cloud Infrastructure")
+    risk_score: Optional[int] = Field(default=25, example=15)
+
+@app.get("/api/vendors/{vendor_id}/sub-vendors")
+def get_vendor_sub_vendors(vendor_id: int):
+    """Retrieve 4th-party sub-vendors supplying a specific 3rd-party vendor."""
+    return get_sub_vendors(vendor_id)
+
+@app.post("/api/vendors/{vendor_id}/sub-vendors", status_code=201)
+def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate):
+    """Add a 4th-party sub-vendor under a 3rd-party vendor with domain existence verification."""
+    sub_domain_clean = sub.domain.lower().replace("https://", "").replace("http://", "").strip("/")
+    verification = verify_vendor_existence(sub_domain_clean)
+    if not verification["is_valid"]:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Sub-Vendor Domain Verification Failed: {verification['message']}"
+        )
+
+    sub_id = add_sub_vendor(vendor_id, sub.name, sub_domain_clean, sub.sector, sub.risk_score)
+    return {"id": sub_id, "message": f"Added 4th-party sub-vendor {sub.name} for vendor ID {vendor_id}"}
+
+@app.delete("/api/sub-vendors/{sub_id}")
+def remove_sub_vendor(sub_id: int):
+    """Remove a 4th-party sub-vendor from the supply chain graph."""
+    delete_sub_vendor(sub_id)
+    return {"message": "Sub-vendor removed successfully."}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
 
