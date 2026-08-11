@@ -349,6 +349,34 @@ def delete_vendor(vendor_id: int):
     conn.close()
     return {"message": "Vendor deleted successfully."}
 
+@app.get("/api/vendors/{vendor_id}/shap-risk")
+def get_vendor_shap_risk(vendor_id: int):
+    """Scikit-Learn RandomForest + SHAP Feature Attribution Endpoint"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT v.*,
+            COALESCE((
+                SELECT SUM(score_impact) FROM incidents
+                WHERE vendor_id = v.id AND status IN ('OPEN', 'INVESTIGATING')
+            ), 0) AS incident_penalty,
+            COALESCE((
+                SELECT COUNT(*) FROM incidents
+                WHERE vendor_id = v.id AND status IN ('OPEN', 'INVESTIGATING')
+            ), 0) AS active_incidents
+        FROM vendors v WHERE v.id = ?
+    """, (vendor_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+
+    v = dict(row)
+    shap_data = calculate_shap_vendor_risk(v)
+    return shap_data
+
+
 class VendorIncidentCreate(BaseModel):
     title: str = Field(..., example="Ransomware Attack Detected")
     description: Optional[str] = Field(default=None, example="Vendor reported unauthorized access")

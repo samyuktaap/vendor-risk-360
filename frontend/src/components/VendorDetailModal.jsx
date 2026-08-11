@@ -44,13 +44,28 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const [incidentStats, setIncidentStats] = useState(null);
   const [loggingIncident, setLoggingIncident] = useState(false);
   const [resolvingId, setResolvingId] = useState(null);
+  const [shapData, setShapData] = useState(null);
 
   useEffect(() => {
     if (vendorId) {
       fetchVendorDetail();
       fetchIncidents();
+      fetchShapData();
     }
   }, [vendorId]);
+
+  const fetchShapData = async () => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/shap-risk`);
+      if (res.ok) {
+        const json = await res.json();
+        setShapData(json);
+      }
+    } catch (err) {
+      console.error("Failed to fetch SHAP risk data:", err);
+    }
+  };
+
 
 
   const [error, setError] = useState(null);
@@ -393,6 +408,79 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                 </div>
               </div>
             )}
+
+            {/* 🌲 Scikit-Learn RandomForest + SHAP Explainability Card */}
+            {shapData && shapData.status === 'success' && (
+              <div className="rounded-2xl overflow-hidden border border-emerald-500/20 bg-gradient-to-br from-slate-900/90 via-slate-900/80 to-emerald-950/20 shadow-lg">
+                <div className="px-4 pt-4 pb-3 flex items-center justify-between border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+                      <Brain className="w-3.5 h-3.5 text-emerald-400" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
+                        <span>Scikit-Learn & SHAP Feature Attribution</span>
+                        <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          RandomForest Model
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Explainable AI (XAI) breakdown of risk score drivers & protective factors
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] text-slate-400 uppercase tracking-wider">ML Predicted Score</div>
+                    <div className="text-lg font-black text-emerald-400">{shapData.ml_predicted_score} <span className="text-xs text-slate-500">/ 100</span></div>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* Top Risk Drivers */}
+                    <div className="bg-slate-900/70 border border-rose-500/20 rounded-xl p-3 space-y-2">
+                      <div className="text-[11px] font-bold text-rose-300 flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5 text-rose-400" />
+                        Top Risk Drivers (+ Risk Points)
+                      </div>
+                      <div className="space-y-1.5">
+                        {shapData.top_risk_drivers && shapData.top_risk_drivers.length > 0 ? (
+                          shapData.top_risk_drivers.map((item, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs p-2 rounded-lg bg-rose-500/5 border border-rose-500/10">
+                              <span className="text-slate-300 font-medium">{item.label}</span>
+                              <span className="font-mono font-bold text-rose-400">+{item.shap_value}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-[11px] text-slate-500 italic">No significant risk escalations detected.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Protective Factors */}
+                    <div className="bg-slate-900/70 border border-emerald-500/20 rounded-xl p-3 space-y-2">
+                      <div className="text-[11px] font-bold text-emerald-300 flex items-center gap-1.5">
+                        <TrendingDown className="w-3.5 h-3.5 text-emerald-400" />
+                        Protective Factors (- Risk Points)
+                      </div>
+                      <div className="space-y-1.5">
+                        {shapData.protective_factors && shapData.protective_factors.length > 0 ? (
+                          shapData.protective_factors.map((item, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs p-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
+                              <span className="text-slate-300 font-medium">{item.label}</span>
+                              <span className="font-mono font-bold text-emerald-400">{item.shap_value}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-[11px] text-slate-500 italic">Baseline score operating at standard levels.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
               <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
                 <div className="flex justify-between text-[11px] text-slate-400 mb-1">

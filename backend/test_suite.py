@@ -287,9 +287,29 @@ sanc = check_vendor_sanctions("Cloudflare")
 check("Sanctions: Returns dict", isinstance(sanc, dict))
 check("Sanctions: sanctions_score in 0-100", 0 <= sanc.get("sanctions_score", -1) <= 100, str(sanc.get("sanctions_score")))
 
+# Scikit-Learn & SHAP ML Risk Service
+from services.mlRiskService import calculate_shap_vendor_risk
+shap_res = calculate_shap_vendor_risk({
+    "name": "Acme Corp",
+    "news_score": 45,
+    "active_incidents": 2,
+    "incident_penalty": 20,
+    "criticality_tier": "Tier 1 - Mission Critical",
+    "data_sensitivity": "PII / PHI",
+    "contract_value": 500000,
+    "custom_ticker": "ACME",
+    "cve_count": 3,
+    "sanctions_score": 0
+})
+check("Scikit-Learn & SHAP: Returns dict", isinstance(shap_res, dict))
+check("Scikit-Learn & SHAP: status success", shap_res.get("status") == "success", shap_res.get("status"))
+check("Scikit-Learn & SHAP: ml_predicted_score present", "ml_predicted_score" in shap_res)
+check("Scikit-Learn & SHAP: top_risk_drivers present", "top_risk_drivers" in shap_res)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS SUMMARY
 # ═══════════════════════════════════════════════════════════════════════════════
+
 section("FINAL RESULTS")
 total = len(results)
 passed = sum(1 for r in results if r[0] == PASS)
