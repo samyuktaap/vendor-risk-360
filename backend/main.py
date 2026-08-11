@@ -118,6 +118,7 @@ def get_vendors():
         SELECT
             v.id, v.name, v.domain, v.sector, v.risk_tier, v.risk_score,
             v.hibp_score, v.news_score, v.sanctions_score, v.abuse_score,
+            v.criticality_tier, v.data_sensitivity, v.contract_value, v.compliance_certs,
             v.last_checked_at, v.created_at,
             COALESCE((
                 SELECT SUM(score_impact) FROM incidents

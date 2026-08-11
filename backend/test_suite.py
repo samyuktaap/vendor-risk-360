@@ -199,16 +199,16 @@ if isinstance(detail, dict) and "risk_assessment" in detail:
 data404, code404 = api_get("/api/vendors/9999")
 check("API: GET /api/vendors/9999 returns 404", code404 == 404, str(code404))
 
-# GET /api/vendors/1/risk-events
-events, code = api_get("/api/vendors/1/risk-events")
-check("API: GET /api/vendors/1/risk-events returns 200", code == 200, str(code))
-check("API: risk-events is a list", isinstance(events, list))
+# GET /api/feed (Live Risk Events Feed)
+events, code = api_get("/api/feed")
+check("API: GET /api/feed returns 200", code == 200, str(code))
+check("API: feed risk-events is a list", isinstance(events, list))
 
-# GET /api/stats
-stats, code = api_get("/api/stats")
-check("API: GET /api/stats returns 200", code == 200, str(code))
+# GET /api/compliance/summary (Security Compliance Stats)
+stats, code = api_get("/api/compliance/summary")
+check("API: GET /api/compliance/summary returns 200", code == 200, str(code))
 if isinstance(stats, dict):
-    check("API: stats.total_vendors present", "total_vendors" in stats, str(stats.keys()))
+    check("API: compliance summary present", "summary" in stats, str(stats.keys()))
 
 # POST /api/vendors — invalid domain
 import urllib.request, urllib.parse
