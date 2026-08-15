@@ -5,6 +5,8 @@
 backend/.env
 backend/.env.*
 !backend/.env.example
+vault_test_creds.env
+backend/vault_test_creds.env
 
 # SQLite Database & Storage
 *.db

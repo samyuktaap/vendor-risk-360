@@ -1,9 +1,11 @@
 import os
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+
+from services.auth_service import get_current_session, get_current_user_with_mfa, SESSION_COOKIE_NAME
 
 from database import (
     init_db, get_db, get_quota_stats,
@@ -354,12 +356,49 @@ def refresh_vendor_risk(vendor_id: int):
     }
 
 @app.delete("/api/vendors/{vendor_id}")
-def delete_vendor(vendor_id: int):
+def delete_vendor(vendor_id: int, request: Request, current_user = Depends(get_current_user_with_mfa)):
+    from services.audit_log_service import get_audit_log, AuditAction
+    
+    # RBAC: Only CISO or ENTERPRISE_ADMIN can delete a vendor
+    if current_user["role"] not in ("CISO", "ENTERPRISE_ADMIN"):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.PERMISSION_DENIED,
+            resource=f"vendor:{vendor_id}:delete",
+            outcome="DENIED",
+            actor_id=current_user["user_id"],
+            actor_email=current_user["email"],
+            actor_role=current_user["role"],
+            ip_address=client_ip,
+            session_id=current_user["session_id"]
+        )
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+        
     conn = get_db()
     cursor = conn.cursor()
+    cursor.execute("SELECT name FROM vendors WHERE id = ?", (vendor_id,))
+    vendor = cursor.fetchone()
+    if not vendor:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+        
     cursor.execute("DELETE FROM vendors WHERE id = ?", (vendor_id,))
     conn.commit()
     conn.close()
+    
+    # Audit log success
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.VENDOR_DELETED,
+        resource=f"vendor:{vendor_id}:{vendor['name']}",
+        actor_id=current_user["user_id"],
+        actor_email=current_user["email"],
+        actor_role=current_user["role"],
+        ip_address=client_ip,
+        session_id=current_user["session_id"]
+    )
     return {"message": "Vendor deleted successfully."}
 
 @app.get("/api/vendors/{vendor_id}/shap-risk")
@@ -793,8 +832,220 @@ def remove_sub_vendor(sub_id: int):
     delete_sub_vendor(sub_id)
     return {"message": "Sub-vendor removed successfully."}
 
+# Google OIDC & MFA Endpoints
+class GoogleLoginRequest(BaseModel):
+    id_token: str
+
+@app.post("/api/auth/google-login")
+def google_login_endpoint(payload: GoogleLoginRequest, request: Request, response: Response):
+    from services.auth_service import verify_google_token, get_or_create_user, create_session
+    from services.audit_log_service import get_audit_log, AuditAction
+    
+    db_conn = get_db()
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    
+    try:
+        # 1. Verify Google identity token
+        idinfo = verify_google_token(payload.id_token)
+        email = idinfo["email"]
+        sub = idinfo["sub"]
+        name = idinfo.get("name", email.split("@")[0])
+        
+        # 2. Get or create user
+        user = get_or_create_user(sub, email, name, db_conn)
+        
+        # 3. Session Fixation Protection: Revoke any existing session in incoming cookies
+        from services.auth_service import SESSION_COOKIE_NAME, revoke_session
+        old_session_id = request.cookies.get(SESSION_COOKIE_NAME)
+        if old_session_id:
+            revoke_session(old_session_id, db_conn)
+            
+        # 4. Create new session with rotated ID
+        session_id = create_session(user["id"], request, response, db_conn, mfa_verified=False)
+        
+        # 4. Audit log success
+        audit.record(
+            action=AuditAction.LOGIN_SUCCESS,
+            resource="auth:google-login",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            ip_address=client_ip,
+            session_id=session_id
+        )
+        
+        # Determine if MFA step-up is required
+        mfa_required = user["role"] in ("CISO", "ENTERPRISE_ADMIN") or bool(user["mfa_enabled"])
+        
+        return {
+            "status": "success",
+            "user": {
+                "id": user["id"],
+                "email": user["email"],
+                "name": user["name"],
+                "role": user["role"],
+                "mfa_required": mfa_required
+            }
+        }
+    except Exception as e:
+        audit.record(
+            action=AuditAction.LOGIN_FAIL,
+            resource="auth:google-login",
+            outcome="DENIED",
+            ip_address=client_ip,
+            details={"error": str(e)}
+        )
+        raise HTTPException(status_code=401, detail=str(e))
+    finally:
+        db_conn.close()
+
+@app.post("/api/auth/logout")
+def logout_endpoint(request: Request, response: Response):
+    from services.auth_service import revoke_session, SESSION_COOKIE_NAME
+    from services.audit_log_service import get_audit_log, AuditAction
+    
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_id:
+        db_conn = get_db()
+        try:
+            # Get session details for audit logging before revocation
+            cursor = db_conn.cursor()
+            cursor.execute(
+                "SELECT s.*, u.email, u.role FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.session_id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                audit = get_audit_log()
+                client_ip = request.client.host if request.client else "127.0.0.1"
+                audit.record(
+                    action=AuditAction.SIGN_OUT,
+                    resource="auth:logout",
+                    actor_id=row["user_id"],
+                    actor_email=row["email"],
+                    actor_role=row["role"],
+                    ip_address=client_ip,
+                    session_id=session_id
+                )
+            revoke_session(session_id, db_conn)
+        finally:
+            db_conn.close()
+            
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return {"status": "success", "message": "Logged out successfully"}
+
+@app.post("/api/auth/setup-mfa")
+def setup_mfa_endpoint(request: Request, session = Depends(get_current_session)):
+    from services.totp_service import generate_totp_secret, get_totp_uri, generate_qr_code_png_b64
+    from services.encryption_service import get_encryption_service
+    
+    db_conn = get_db()
+    try:
+        secret = generate_totp_secret()
+        
+        # Encrypt the TOTP secret using Vault Transit (or mock Transit)
+        enc_svc = get_encryption_service()
+        ev = enc_svc.encrypt(
+            secret,
+            tenant_id="enterprise-1",
+            vendor_id=session["user_id"],
+            resource_type="user_mfa",
+            field_name="totp_secret"
+        )
+        
+        # Save to DB
+        cursor = db_conn.cursor()
+        cursor.execute(
+            "UPDATE users SET totp_secret_enc = ?, totp_secret_aad = ? WHERE id = ?",
+            (ev.ciphertext, ev.aad_str, session["user_id"])
+        )
+        db_conn.commit()
+        
+        # Generate URI & QR Code
+        uri = get_totp_uri(secret, session["email"])
+        qr_b64 = generate_qr_code_png_b64(uri)
+        
+        return {
+            "status": "success",
+            "provisioning_uri": uri,
+            "qr_code_png_b64": qr_b64
+        }
+    finally:
+        db_conn.close()
+
+class MfaVerifyRequest(BaseModel):
+    otp_code: str
+
+@app.post("/api/auth/verify-mfa")
+def verify_mfa_endpoint(payload: MfaVerifyRequest, request: Request, session = Depends(get_current_session)):
+    from services.totp_service import verify_totp, MfaRateLimitException
+    from services.encryption_service import get_encryption_service
+    from services.audit_log_service import get_audit_log, AuditAction
+    
+    db_conn = get_db()
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    
+    # 1. Read encrypted secret from user profile
+    totp_enc = session["totp_secret_enc"]
+    totp_aad = session["totp_secret_aad"]
+    
+    if not totp_enc or not totp_aad:
+        db_conn.close()
+        raise HTTPException(status_code=400, detail="MFA setup has not been initiated.")
+        
+    try:
+        # 2. Decrypt secret key
+        enc_svc = get_encryption_service()
+        secret = enc_svc.decrypt_raw(totp_enc, totp_aad)
+        
+        # 3. Verify TOTP (with rate limiting and replay protection)
+        is_valid = verify_totp(
+            secret=secret,
+            otp_code=payload.otp_code,
+            user_id=session["user_id"],
+            ip_address=client_ip,
+            db_conn=db_conn
+        )
+        
+        if not is_valid:
+            audit.record(
+                action=AuditAction.MFA_FAIL,
+                resource="auth:mfa-verify",
+                outcome="DENIED",
+                actor_id=session["user_id"],
+                actor_email=session["email"],
+                actor_role=session["role"],
+                ip_address=client_ip,
+                session_id=session["session_id"]
+            )
+            raise HTTPException(status_code=400, detail="Invalid OTP code or already used (replay protection)")
+            
+        # 4. Mark session and user as MFA enabled/verified
+        cursor = db_conn.cursor()
+        cursor.execute("UPDATE sessions SET mfa_verified = 1 WHERE session_id = ?", (session["session_id"],))
+        cursor.execute("UPDATE users SET mfa_enabled = 1 WHERE id = ?", (session["user_id"],))
+        db_conn.commit()
+        
+        audit.record(
+            action=AuditAction.MFA_VERIFIED,
+            resource="auth:mfa-verify",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"]
+        )
+        return {"status": "success", "message": "MFA verified and enabled successfully"}
+    except MfaRateLimitException as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    finally:
+        db_conn.close()
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Enforce workers=1 (Priority 3: SQLite multi-process safety)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, workers=1)
 
 

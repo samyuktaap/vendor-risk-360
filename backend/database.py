@@ -173,6 +173,105 @@ def init_db():
         )
     """)
 
+    # -----------------------------------------------------------------------
+    # Security: Tamper-Evident Audit Log
+    # Every row contains the SHA-256 hash of the previous row (hash chain) and
+    # the SHA-256 of its own fields. Any deletion or modification breaks the chain.
+    #
+    # PRODUCTION NOTE: In PostgreSQL, also run:
+    #   REVOKE UPDATE, DELETE ON audit_log FROM app_user;
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp   TEXT NOT NULL,
+            actor_id    INTEGER,
+            actor_email TEXT NOT NULL DEFAULT 'system',
+            actor_role  TEXT NOT NULL DEFAULT 'system',
+            action      TEXT NOT NULL,
+            resource    TEXT NOT NULL,
+            ip_address  TEXT NOT NULL DEFAULT '',
+            session_id  TEXT NOT NULL DEFAULT '',
+            outcome     TEXT NOT NULL DEFAULT 'SUCCESS',
+            details     TEXT NOT NULL DEFAULT '{}',
+            prev_hash   TEXT NOT NULL,
+            row_hash    TEXT NOT NULL
+        )
+    """)
+
+    # -----------------------------------------------------------------------
+    # Security: Audit Checkpoints (HMAC-SHA256 signed every N rows)
+    # Signed with AUDIT_HMAC_KEY from Docker secret / env var.
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_checkpoints (
+            checkpoint_seq   INTEGER PRIMARY KEY,
+            row_id           INTEGER NOT NULL,
+            accumulated_hash TEXT NOT NULL,
+            hmac_sha256      TEXT NOT NULL,
+            created_at       TEXT NOT NULL
+        )
+    """)
+
+    # -----------------------------------------------------------------------
+    # Security: TOTP Replay Protection Cache
+    # Records (user_id, code, window_slot) tuples with a 90-second TTL.
+    # Any re-submission of the same code within the same 30-second window is
+    # rejected, even if the TOTP math is valid.
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS totp_used_codes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            code        TEXT NOT NULL,
+            window_slot INTEGER NOT NULL,
+            expires_at  TEXT NOT NULL,
+            UNIQUE (user_id, code, window_slot)
+        )
+    """)
+    # -----------------------------------------------------------------------
+    # Security: TOTP Rate Limiting
+    # Tracks failed and successful TOTP attempts per user and IP address.
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS totp_attempts (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            ip_address   TEXT NOT NULL,
+            attempt_time TEXT NOT NULL,
+            is_successful INTEGER NOT NULL
+        )
+    """)
+    # -----------------------------------------------------------------------
+    # Security: Users and Sessions
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email           TEXT UNIQUE NOT NULL,
+            name            TEXT NOT NULL,
+            google_sub      TEXT UNIQUE NOT NULL,
+            role            TEXT NOT NULL,
+            totp_secret_enc TEXT,
+            totp_secret_aad TEXT,
+            mfa_enabled     INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id       TEXT PRIMARY KEY,
+            user_id          INTEGER NOT NULL,
+            ip_address       TEXT NOT NULL,
+            user_agent       TEXT NOT NULL,
+            mfa_verified     INTEGER NOT NULL DEFAULT 0,
+            created_at       TEXT NOT NULL,
+            expires_at       TEXT NOT NULL,
+            last_activity_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+
     conn.commit()
     conn.close()
 
