@@ -25,21 +25,39 @@ VendorRisk 360 continuously evaluates enterprise vendors across **5 live securit
 
 ---
 
+## 🔒 Production Security Architecture
+
+The application implements a zero-cost, self-hosted, enterprise-grade security stack:
+- **KMS / Transit Encryption**: Vault OSS manages encryption keys (AES-256-GCM) with key derivation enabled (`derived=True`). Raw keys never touch backend memory.
+- **Envelope File Encryption**: Streaming chunk-by-chunk encryption for large documents using generated DEKs wrapped by Vault.
+- **OIDC Authentication**: Official Google Identity Services / OIDC verification (issuer, audience, and client-side signature validations).
+- **Session Protection**: HttpOnly/Secure session cookie lifecycle, 15-minute idle timeouts, and automatic session ID rotation on login to prevent fixation.
+- **Tamper-Evident Audit Logging**: HMAC-SHA256 signed checkpoints and chain hashing of all logins, logouts, access failures, and data decryptions.
+
+---
+
 ## 🚀 Quick Start
 
-### 1. Backend Setup
+### 1. HashiCorp Vault Setup (Local Dev Mode)
 ```bash
-# Navigate to backend
+# 1. Start Vault dev server in the background
+vault server -dev -dev-listen-address="127.0.0.1:8200" -dev-root-token-id="my-root-token"
+
+# 2. Run the initialization script to set up engines and AppRole auth
 cd backend
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start FastAPI Server
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
+python setup_vault.py
 ```
 
-### 2. Frontend Setup
+### 2. Backend Setup
+```bash
+cd backend
+pip install -r requirements.txt
+
+# Start FastAPI Server (enforcing workers=1 for SQLite serialization safety)
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers=1
+```
+
+### 3. Frontend Setup
 ```bash
 # Navigate to frontend
 cd frontend
@@ -51,20 +69,27 @@ npm install
 npm run dev
 ```
 
-Open **[http://localhost:5173/](http://localhost:5173/)** in your browser.
+---
+
+## 🧪 Running Security Test Suite
+
+To run the automated encryption, OIDC auth, and role check test suites:
+```bash
+cd backend
+# 1. Run encryption and auth tests
+python -m pytest tests/test_encryption.py tests/test_auth.py -v
+
+# 2. Run API integration/smoke tests
+python test_suite.py
+```
 
 ---
 
-## 🔒 Security & Environment Variables
+## ⚙️ Environment Variables
 
-Create a `backend/.env` file from `backend/.env.example`:
-```env
-NEWS_API_KEY=your_optional_key
-HIBP_API_KEY=your_optional_key
-OPENSANCTIONS_API_KEY=your_optional_key
-ALPHA_VANTAGE_API_KEY=your_optional_key
-
-BYPASS_CACHE=true
-DEMO_MODE=false
+Configure `backend/.env` with your API credentials.
+For Google Sign-In, set `GOOGLE_CLIENT_ID` in your shell profile or secure secret vaults:
+```bash
+export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
+export AUDIT_HMAC_KEY="your-random-hmac-checkpoint-key"
 ```
-*Note: Secret `.env` files and SQLite databases are strictly excluded from Git tracking via `.gitignore`.*
