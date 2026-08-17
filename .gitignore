@@ -10,6 +10,8 @@ backend/vault_test_creds.env
 
 # SQLite Database & Storage
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 backend/vendor_risk.db

@@ -33,6 +33,7 @@ import {
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import RiskScoreRing from './RiskScoreRing';
 import RiskQuestionnaire from './RiskQuestionnaire';
+import CybersecurityAssessment from './CybersecurityAssessment';
 
 export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, currentUser }) {
   const [data, setData] = useState(null);
@@ -579,6 +580,17 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, 
             {/* Detail Tabs */}
             <div className="border-b border-slate-800 flex flex-wrap gap-4 text-xs font-semibold">
               <button
+                onClick={() => setActiveTab('cybersecurity360')}
+                className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
+                  activeTab === 'cybersecurity360'
+                    ? 'border-cyan-400 text-cyan-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                Cybersecurity 360°
+              </button>
+              <button
                 onClick={() => setActiveTab('assessment')}
                 className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
                   activeTab === 'assessment'
@@ -714,6 +726,14 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, 
                 )}
               </button>
             </div>
+
+            {/* TAB CONTENT: CYBERSECURITY 360° */}
+            {activeTab === 'cybersecurity360' && (
+              <CybersecurityAssessment 
+                vendorId={vendorId} 
+                onScoreUpdated={fetchDeterministicScore} 
+              />
+            )}
 
             {/* TAB CONTENT: QUESTIONNAIRE */}
             {activeTab === 'assessment' && (

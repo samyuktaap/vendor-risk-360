@@ -15,12 +15,40 @@ from database import (
     create_remediation_task, get_vendor_remediation_tasks, update_remediation_task, get_remediation_summary,
     add_sub_vendor, get_sub_vendors, delete_sub_vendor,
     get_dashboard_metrics,
+    create_cybersecurity_assessment,
+    get_vendor_cybersecurity_assessments,
+    get_cybersecurity_assessment_by_id,
+    save_cybersecurity_answers,
+    submit_cybersecurity_assessment,
+    get_vendor_latest_cybersecurity_score,
+    get_vendor_cybersecurity_history,
+    review_cybersecurity_evidence,
     COMPLIANCE_FRAMEWORKS
 )
 from seed_data import seed_database
 from services.risk_engine import compute_vendor_risk_score
 from services.mlRiskService import calculate_shap_vendor_risk
 from services.domainVerificationService import verify_vendor_existence
+from services.cybersecurity_catalog import get_questions_catalog, get_question_by_id, CYBERSECURITY_DOMAINS
+from services.cybersecurity_scoring import calculate_cybersecurity_score
+from services.audit_log_service import get_audit_log, AuditAction
+
+
+class CybersecurityAnswerItem(BaseModel):
+    question_id: str
+    domain: str
+    answer_value: str
+    evidence_document_id: Optional[int] = None
+    evidence_status: Optional[str] = None
+    evidence_notes: Optional[str] = None
+
+class CybersecurityAnswersSave(BaseModel):
+    answers: List[CybersecurityAnswerItem]
+
+class EvidenceReviewRequest(BaseModel):
+    status: str
+    notes: Optional[str] = None
+
 
 
 app = FastAPI(title="VendorRisk 360 API", version="1.0.0")
@@ -1497,6 +1525,249 @@ def get_vendor_risk_history(vendor_id: int, request: Request, session = Depends(
     db_conn.close()
     
     return {"history": [dict(r) for r in rows]}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CYBERSECURITY 360° ASSESSMENT ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/vendors/{vendor_id}/cybersecurity-assessments")
+def create_cybersecurity_assessment_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.CYBERSECURITY_ACCESS_DENIED,
+            resource=f"vendor:{vendor_id}:cybersecurity",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            outcome="DENIED",
+            details={"reason": "Cross-company or invalid vendor"}
+        )
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+        
+    assessment = create_cybersecurity_assessment(vendor_id, user_company_id)
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.CYBERSECURITY_ASSESSMENT_CREATED,
+        resource=f"cybersecurity_assessment:{assessment['id']}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"]
+    )
+    
+    assessment["questions_catalog"] = get_questions_catalog()
+    assessment["domains"] = CYBERSECURITY_DOMAINS
+    return assessment
+
+
+@app.get("/api/vendors/{vendor_id}/cybersecurity-assessments")
+def get_vendor_cybersecurity_assessments_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+        
+    assessments = get_vendor_cybersecurity_assessments(vendor_id, user_company_id)
+    return {"assessments": assessments}
+
+
+@app.get("/api/cybersecurity-assessments/{assessment_id}")
+def get_cybersecurity_assessment_endpoint(assessment_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    assessment = get_cybersecurity_assessment_by_id(assessment_id, user_company_id)
+    if not assessment:
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.CYBERSECURITY_ACCESS_DENIED,
+            resource=f"cybersecurity_assessment:{assessment_id}",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            outcome="DENIED"
+        )
+        raise HTTPException(status_code=404, detail="Cybersecurity assessment not found")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.CYBERSECURITY_ASSESSMENT_VIEWED,
+        resource=f"cybersecurity_assessment:{assessment_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"]
+    )
+    
+    assessment["questions_catalog"] = get_questions_catalog()
+    assessment["domains"] = CYBERSECURITY_DOMAINS
+    return assessment
+
+
+@app.put("/api/cybersecurity-assessments/{assessment_id}/answers")
+def save_cybersecurity_answers_endpoint(assessment_id: int, payload: CybersecurityAnswersSave, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    answers_list = [a.dict() for a in payload.answers]
+    updated_assessment = save_cybersecurity_answers(assessment_id, user_company_id, answers_list)
+    if not updated_assessment:
+        raise HTTPException(status_code=404, detail="Cybersecurity assessment not found or access denied")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.CYBERSECURITY_DRAFT_SAVED,
+        resource=f"cybersecurity_assessment:{assessment_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"]
+    )
+    
+    for a in payload.answers:
+        if a.evidence_document_id:
+            audit.record(
+                action=AuditAction.CYBERSECURITY_EVIDENCE_LINKED,
+                resource=f"cybersecurity_assessment:{assessment_id}:question:{a.question_id}",
+                actor_id=session["user_id"],
+                actor_email=session["email"],
+                actor_role=session["role"],
+                ip_address=client_ip,
+                session_id=session["session_id"],
+                details={"document_id": a.evidence_document_id}
+            )
+            
+    updated_assessment["questions_catalog"] = get_questions_catalog()
+    updated_assessment["domains"] = CYBERSECURITY_DOMAINS
+    return updated_assessment
+
+
+@app.post("/api/cybersecurity-assessments/{assessment_id}/submit")
+def submit_cybersecurity_assessment_endpoint(assessment_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    assessment = get_cybersecurity_assessment_by_id(assessment_id, user_company_id)
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Cybersecurity assessment not found")
+        
+    score_data = calculate_cybersecurity_score(assessment.get("answers", []))
+    submitted_assessment = submit_cybersecurity_assessment(assessment_id, user_company_id, score_data)
+    
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.CYBERSECURITY_SUBMITTED,
+        resource=f"cybersecurity_assessment:{assessment_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"cybersecurity_score": score_data["cybersecurity_score"], "risk_level": score_data["risk_level"]}
+    )
+    audit.record(
+        action=AuditAction.CYBERSECURITY_SCORE_CALCULATED,
+        resource=f"cybersecurity_assessment:{assessment_id}:score",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"score": score_data["cybersecurity_score"], "version": score_data["scoring_version"]}
+    )
+    
+    submitted_assessment["questions_catalog"] = get_questions_catalog()
+    submitted_assessment["domains"] = CYBERSECURITY_DOMAINS
+    return submitted_assessment
+
+
+@app.get("/api/vendors/{vendor_id}/cybersecurity-score")
+def get_vendor_cybersecurity_score_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+        
+    score_rec = get_vendor_latest_cybersecurity_score(vendor_id, user_company_id)
+    if not score_rec:
+        raise HTTPException(status_code=404, detail="No Cybersecurity 360° assessment yet.")
+        
+    return score_rec
+
+
+@app.get("/api/vendors/{vendor_id}/cybersecurity-history")
+def get_vendor_cybersecurity_history_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+        
+    history = get_vendor_cybersecurity_history(vendor_id, user_company_id)
+    return {"history": history}
+
+
+@app.put("/api/cybersecurity-assessments/{assessment_id}/evidence/{question_id}/review")
+def review_cybersecurity_evidence_endpoint(assessment_id: int, question_id: str, payload: EvidenceReviewRequest, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "AUDITOR"):
+        raise HTTPException(status_code=403, detail="Unauthorized: Evidence review requires CISO, ENTERPRISE_ADMIN, or AUDITOR role")
+        
+    status_upper = payload.status.upper()
+    if status_upper not in ("REVIEWED", "REJECTED"):
+        raise HTTPException(status_code=400, detail="Invalid evidence status. Must be REVIEWED or REJECTED.")
+        
+    success = review_cybersecurity_evidence(assessment_id, question_id, user_company_id, status_upper, payload.notes)
+    if not success:
+        raise HTTPException(status_code=404, detail="Cybersecurity assessment or question answer not found")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit_action = AuditAction.CYBERSECURITY_EVIDENCE_REVIEWED if status_upper == "REVIEWED" else AuditAction.CYBERSECURITY_EVIDENCE_REJECTED
+    audit.record(
+        action=audit_action,
+        resource=f"cybersecurity_assessment:{assessment_id}:question:{question_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"status": status_upper, "notes": payload.notes}
+    )
+    
+    return {"status": "success", "evidence_status": status_upper}
 
 # --- End Vendor Risk Scoring Endpoints ---
 

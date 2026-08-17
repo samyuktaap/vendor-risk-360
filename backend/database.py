@@ -31,7 +31,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vendors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL DEFAULT 1,
             name TEXT NOT NULL,
             domain TEXT NOT NULL,
             email TEXT,
@@ -323,7 +323,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id      INTEGER NOT NULL,
+            company_id      INTEGER NOT NULL DEFAULT 1,
             email           TEXT UNIQUE NOT NULL,
             name            TEXT NOT NULL,
             google_sub      TEXT UNIQUE NOT NULL,
@@ -345,6 +345,54 @@ def init_db():
             expires_at       TEXT NOT NULL,
             last_activity_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+
+    # Cybersecurity 360° Assessment Tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cybersecurity_assessments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'DRAFT',
+            scoring_version TEXT NOT NULL DEFAULT '1.0',
+            cybersecurity_score REAL DEFAULT 0.0,
+            domain_scores_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            submitted_at TEXT,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cybersecurity_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assessment_id INTEGER NOT NULL,
+            question_id TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            answer_value TEXT NOT NULL,
+            evidence_document_id INTEGER,
+            evidence_status TEXT DEFAULT 'MISSING',
+            evidence_notes TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (assessment_id) REFERENCES cybersecurity_assessments (id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cybersecurity_score_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            assessment_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL,
+            cybersecurity_score REAL NOT NULL,
+            domain_scores_json TEXT NOT NULL,
+            scoring_version TEXT NOT NULL,
+            calculated_at TEXT NOT NULL,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (assessment_id) REFERENCES cybersecurity_assessments (id) ON DELETE CASCADE
         )
     """)
 
@@ -881,3 +929,214 @@ def get_dashboard_metrics(company_id: int) -> dict:
         "risk_distribution": risk_distribution,
         "risk_trend": risk_trend
     }
+
+# ---------------------------------------------------------------------------
+# Cybersecurity 360° Assessment Database Helpers
+# ---------------------------------------------------------------------------
+
+def create_cybersecurity_assessment(vendor_id: int, company_id: int) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id FROM vendors WHERE id = ? AND company_id = ?", (vendor_id, company_id))
+    if not cursor.fetchone():
+        conn.close()
+        return None
+        
+    cursor.execute("""
+        SELECT * FROM cybersecurity_assessments 
+        WHERE vendor_id = ? AND company_id = ? AND status = 'DRAFT'
+        ORDER BY id DESC LIMIT 1
+    """, (vendor_id, company_id))
+    row = cursor.fetchone()
+    
+    if row:
+        assessment_id = row["id"]
+    else:
+        now = datetime.utcnow().isoformat()
+        cursor.execute("""
+            INSERT INTO cybersecurity_assessments (vendor_id, company_id, status, scoring_version, created_at, updated_at)
+            VALUES (?, ?, 'DRAFT', '1.0', ?, ?)
+        """, (vendor_id, company_id, now, now))
+        assessment_id = cursor.lastrowid
+        conn.commit()
+        
+    conn.close()
+    return get_cybersecurity_assessment_by_id(assessment_id, company_id)
+
+def get_vendor_cybersecurity_assessments(vendor_id: int, company_id: int) -> list:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM cybersecurity_assessments 
+        WHERE vendor_id = ? AND company_id = ? 
+        ORDER BY id DESC
+    """, (vendor_id, company_id))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_cybersecurity_assessment_by_id(assessment_id: int, company_id: int) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT a.*, v.name as vendor_name, v.domain as vendor_domain 
+        FROM cybersecurity_assessments a
+        JOIN vendors v ON a.vendor_id = v.id
+        WHERE a.id = ? AND a.company_id = ?
+    """, (assessment_id, company_id))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+        
+    assessment = dict(row)
+    if assessment.get("domain_scores_json"):
+        try:
+            assessment["domain_scores"] = json.loads(assessment["domain_scores_json"])
+        except Exception:
+            assessment["domain_scores"] = {}
+            
+    cursor.execute("SELECT * FROM cybersecurity_answers WHERE assessment_id = ?", (assessment_id,))
+    ans_rows = cursor.fetchall()
+    assessment["answers"] = [dict(r) for r in ans_rows]
+    
+    conn.close()
+    return assessment
+
+def save_cybersecurity_answers(assessment_id: int, company_id: int, answers_data: list) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id, status FROM cybersecurity_assessments WHERE id = ? AND company_id = ?", (assessment_id, company_id))
+    ass_row = cursor.fetchone()
+    if not ass_row:
+        conn.close()
+        return None
+        
+    now = datetime.utcnow().isoformat()
+    
+    for item in answers_data:
+        q_id = item.get("question_id")
+        domain = item.get("domain", "")
+        val = item.get("answer_value", "")
+        doc_id = item.get("evidence_document_id")
+        ev_notes = item.get("evidence_notes")
+        
+        explicit_ev_status = item.get("evidence_status")
+        if explicit_ev_status in ("REVIEWED", "REJECTED", "PRESENT", "MISSING"):
+            ev_status = explicit_ev_status
+        else:
+            ev_status = "PRESENT" if doc_id else "MISSING"
+            
+        cursor.execute("""
+            UPDATE cybersecurity_answers
+            SET answer_value = ?, evidence_document_id = ?, evidence_status = ?, evidence_notes = ?, updated_at = ?
+            WHERE assessment_id = ? AND question_id = ?
+        """, (str(val), doc_id, ev_status, ev_notes, now, assessment_id, q_id))
+        
+        if cursor.rowcount == 0:
+            cursor.execute("""
+                INSERT INTO cybersecurity_answers 
+                (assessment_id, question_id, domain, answer_value, evidence_document_id, evidence_status, evidence_notes, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (assessment_id, q_id, domain, str(val), doc_id, ev_status, ev_notes, now))
+            
+    cursor.execute("UPDATE cybersecurity_assessments SET updated_at = ? WHERE id = ?", (now, assessment_id))
+    conn.commit()
+    conn.close()
+    
+    return get_cybersecurity_assessment_by_id(assessment_id, company_id)
+
+def submit_cybersecurity_assessment(assessment_id: int, company_id: int, score_data: dict) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM cybersecurity_assessments WHERE id = ? AND company_id = ?", (assessment_id, company_id))
+    ass_row = cursor.fetchone()
+    if not ass_row:
+        conn.close()
+        return None
+        
+    now = datetime.utcnow().isoformat()
+    c_score = score_data["cybersecurity_score"]
+    v_version = score_data["scoring_version"]
+    d_scores_json = json.dumps(score_data["domain_scores"])
+    vendor_id = ass_row["vendor_id"]
+    
+    cursor.execute("""
+        UPDATE cybersecurity_assessments 
+        SET status = 'SUBMITTED', cybersecurity_score = ?, domain_scores_json = ?, scoring_version = ?, updated_at = ?, submitted_at = ?
+        WHERE id = ?
+    """, (c_score, d_scores_json, v_version, now, now, assessment_id))
+    
+    cursor.execute("""
+        INSERT INTO cybersecurity_score_history (vendor_id, assessment_id, company_id, cybersecurity_score, domain_scores_json, scoring_version, calculated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (vendor_id, assessment_id, company_id, c_score, d_scores_json, v_version, now))
+    
+    conn.commit()
+    conn.close()
+    
+    return get_cybersecurity_assessment_by_id(assessment_id, company_id)
+
+def get_vendor_latest_cybersecurity_score(vendor_id: int, company_id: int) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM cybersecurity_assessments 
+        WHERE vendor_id = ? AND company_id = ? AND status = 'SUBMITTED'
+        ORDER BY id DESC LIMIT 1
+    """, (vendor_id, company_id))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    res = dict(row)
+    if res.get("domain_scores_json"):
+        try:
+            res["domain_scores"] = json.loads(res["domain_scores_json"])
+        except Exception:
+            res["domain_scores"] = {}
+    return res
+
+def get_vendor_cybersecurity_history(vendor_id: int, company_id: int) -> list:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM cybersecurity_score_history 
+        WHERE vendor_id = ? AND company_id = ?
+        ORDER BY calculated_at ASC
+    """, (vendor_id, company_id))
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        item = dict(r)
+        if item.get("domain_scores_json"):
+            try:
+                item["domain_scores"] = json.loads(item["domain_scores_json"])
+            except Exception:
+                item["domain_scores"] = {}
+        result.append(item)
+    return result
+
+def review_cybersecurity_evidence(assessment_id: int, question_id: str, company_id: int, status: str, notes: str = None) -> bool:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM cybersecurity_assessments WHERE id = ? AND company_id = ?", (assessment_id, company_id))
+    if not cursor.fetchone():
+        conn.close()
+        return False
+        
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        UPDATE cybersecurity_answers 
+        SET evidence_status = ?, evidence_notes = ?, updated_at = ?
+        WHERE assessment_id = ? AND question_id = ?
+    """, (status, notes, now, assessment_id, question_id))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
