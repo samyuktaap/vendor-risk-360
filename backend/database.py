@@ -101,7 +101,15 @@ def init_db():
         "data_handled TEXT",
         "status TEXT DEFAULT 'ACTIVE'",
         "updated_at TEXT",
-        "created_by TEXT"
+        "created_by TEXT",
+        "calculated_tier TEXT DEFAULT 'TIER_3_MEDIUM'",
+        "effective_tier TEXT DEFAULT 'TIER_3_MEDIUM'",
+        "tiering_version TEXT DEFAULT 'v1'",
+        "tier_override TEXT",
+        "tier_override_reason TEXT",
+        "tier_overridden_by TEXT",
+        "tier_overridden_at TEXT",
+        "tier_rationale_json TEXT"
     ]:
         try:
             cursor.execute(f"ALTER TABLE vendors ADD COLUMN {col_def}")
@@ -446,6 +454,22 @@ def init_db():
             description TEXT,
             created_at TEXT NOT NULL,
             is_read INTEGER DEFAULT 0,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
+        )
+    """)
+
+    # Vendor Risk History Table (for Trend Analysis)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS vendor_risk_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL,
+            score REAL NOT NULL,
+            score_type TEXT NOT NULL DEFAULT 'OVERALL',
+            calculated_tier TEXT,
+            assessment_id INTEGER,
+            calculated_at TEXT NOT NULL,
             FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
             FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
         )
@@ -1392,5 +1416,103 @@ def get_vendor_vulnerability_summary_counts(vendor_id: int, company_id: int) -> 
         "accepted_risk_count": row["accepted_risk_count"] or 0,
         "overdue_count": row["overdue_count"] or 0
     }
+
+# ---------------------------------------------------------------------------
+# Vendor Tiering & Risk Trend Database Helpers
+# ---------------------------------------------------------------------------
+
+def get_vendor_tier_info(vendor_id: int, company_id: int) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, name, domain, risk_score, criticality_tier, data_sensitivity, contract_value,
+               calculated_tier, effective_tier, tiering_version,
+               tier_override, tier_override_reason, tier_overridden_by, tier_overridden_at,
+               tier_rationale_json
+        FROM vendors 
+        WHERE id = ? AND company_id = ?
+    """, (vendor_id, company_id))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+        
+    item = dict(row)
+    rationale = []
+    if item.get("tier_rationale_json"):
+        try:
+            rationale = json.loads(item["tier_rationale_json"])
+        except Exception:
+            rationale = []
+    item["rationale"] = rationale
+    item["is_overridden"] = bool(item.get("tier_override"))
+    return item
+
+def update_vendor_tier(vendor_id: int, company_id: int, calculated_tier: str, effective_tier: str, rationale_list: list, tiering_version: str = "v1") -> bool:
+    conn = get_db()
+    cursor = conn.cursor()
+    rationale_json = json.dumps(rationale_list)
+    cursor.execute("""
+        UPDATE vendors
+        SET calculated_tier = ?, effective_tier = ?, tier_rationale_json = ?, tiering_version = ?
+        WHERE id = ? AND company_id = ?
+    """, (calculated_tier, effective_tier, rationale_json, tiering_version, vendor_id, company_id))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+def override_vendor_tier(vendor_id: int, company_id: int, tier_override: str, reason: str, overridden_by: str) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id FROM vendors WHERE id = ? AND company_id = ?", (vendor_id, company_id))
+    if not cursor.fetchone():
+        conn.close()
+        return None
+        
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        UPDATE vendors
+        SET tier_override = ?, effective_tier = ?, tier_override_reason = ?, tier_overridden_by = ?, tier_overridden_at = ?
+        WHERE id = ? AND company_id = ?
+    """, (tier_override, tier_override, reason, overridden_by, now, vendor_id, company_id))
+    conn.commit()
+    conn.close()
+    
+    return get_vendor_tier_info(vendor_id, company_id)
+
+def record_vendor_risk_history(vendor_id: int, company_id: int, score: float, score_type: str = "OVERALL", calculated_tier: str = None, assessment_id: int = None) -> int:
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        INSERT INTO vendor_risk_history (vendor_id, company_id, score, score_type, calculated_tier, assessment_id, calculated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (vendor_id, company_id, float(score), score_type, calculated_tier, assessment_id, now))
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+def get_vendor_risk_history(vendor_id: int, company_id: int, score_type: str = None) -> list:
+    conn = get_db()
+    cursor = conn.cursor()
+    if score_type:
+        cursor.execute("""
+            SELECT * FROM vendor_risk_history 
+            WHERE vendor_id = ? AND company_id = ? AND score_type = ?
+            ORDER BY calculated_at ASC
+        """, (vendor_id, company_id, score_type))
+    else:
+        cursor.execute("""
+            SELECT * FROM vendor_risk_history 
+            WHERE vendor_id = ? AND company_id = ?
+            ORDER BY calculated_at ASC
+        """, (vendor_id, company_id))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 
 

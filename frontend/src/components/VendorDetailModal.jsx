@@ -35,6 +35,7 @@ import RiskScoreRing from './RiskScoreRing';
 import RiskQuestionnaire from './RiskQuestionnaire';
 import CybersecurityAssessment from './CybersecurityAssessment';
 import VulnerabilityManagement from './VulnerabilityManagement';
+import VendorTieringTrend from './VendorTieringTrend';
 
 export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, currentUser }) {
   const [data, setData] = useState(null);
@@ -577,6 +578,13 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, 
                 <div className="text-[9px] text-slate-400 truncate">{breakdown?.dns?.dmarc_present ? 'DMARC Active' : 'No DMARC'}</div>
               </div>
             </div>
+
+            {/* Risk Tiering & Trend Analysis */}
+            <VendorTieringTrend 
+              vendorId={vendorId} 
+              userRole={currentUser?.role} 
+              onTierUpdated={fetchVendorDetail} 
+            />
 
             {/* Detail Tabs */}
             <div className="border-b border-slate-800 flex flex-wrap gap-4 text-xs font-semibold">

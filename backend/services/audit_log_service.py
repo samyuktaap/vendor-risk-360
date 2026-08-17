@@ -116,6 +116,12 @@ class AuditAction(str, Enum):
     VULNERABILITY_STATUS_CHANGED     = "VULNERABILITY_STATUS_CHANGED"
     VULNERABILITY_ASSET_ADDED        = "VULNERABILITY_ASSET_ADDED"
     VULNERABILITY_ACCESS_DENIED      = "VULNERABILITY_ACCESS_DENIED"
+    # Risk Tiering & Trend Analysis
+    VENDOR_TIER_CALCULATED           = "VENDOR_TIER_CALCULATED"
+    VENDOR_TIER_VIEWED               = "VENDOR_TIER_VIEWED"
+    VENDOR_TIER_OVERRIDE             = "VENDOR_TIER_OVERRIDE"
+    RISK_TREND_VIEWED                = "RISK_TREND_VIEWED"
+    RISK_ACCESS_DENIED               = "RISK_ACCESS_DENIED"
 
 
 # ---------------------------------------------------------------------------

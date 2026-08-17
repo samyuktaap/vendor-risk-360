@@ -29,6 +29,11 @@ from database import (
     get_vulnerability_by_id,
     update_vulnerability_status,
     get_vendor_vulnerability_summary_counts,
+    get_vendor_tier_info,
+    update_vendor_tier,
+    override_vendor_tier,
+    record_vendor_risk_history,
+    get_vendor_risk_history,
     COMPLIANCE_FRAMEWORKS
 )
 from seed_data import seed_database
@@ -43,6 +48,12 @@ from services.vulnerability_service import (
     sync_vendor_vulnerabilities_from_feeds,
     VALID_SEVERITIES,
     VALID_STATUSES
+)
+from services.vendor_tiering_service import (
+    calculate_vendor_tier,
+    calculate_risk_trend,
+    VALID_TIERS,
+    TIERING_VERSION
 )
 from services.audit_log_service import get_audit_log, AuditAction
 
@@ -61,6 +72,10 @@ class CybersecurityAnswersSave(BaseModel):
 class EvidenceReviewRequest(BaseModel):
     status: str
     notes: Optional[str] = None
+
+class TierOverrideRequest(BaseModel):
+    tier: str = Field(..., description="Override tier: TIER_1_CRITICAL, TIER_2_HIGH, TIER_3_MEDIUM, TIER_4_LOW", example="TIER_1_CRITICAL")
+    reason: str = Field(..., description="Justification reason for manual tier override", example="Designated as critical banking partner by executive leadership.")
 
 class VulnerabilityStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="New vulnerability status", example="IN_PROGRESS")
@@ -1529,24 +1544,46 @@ def get_vendor_risk_score(vendor_id: int, request: Request, session = Depends(ge
 
 @app.get("/api/vendors/{vendor_id}/risk-history")
 def get_vendor_risk_history(vendor_id: int, request: Request, session = Depends(get_current_session)):
-    # Verify vendor belongs to user's company
-    if not verify_vendor_ownership(vendor_id, session, get_db()):
-        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
     
     if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
         raise HTTPException(status_code=403, detail="Unauthorized: You can only access your own vendor's risk score history")
         
-    db_conn = get_db()
-    cursor = db_conn.cursor()
-    cursor.execute("""
-        SELECT * FROM risk_assessment_scores 
-        WHERE vendor_id = ? 
-        ORDER BY calculated_at ASC
-    """, (vendor_id,))
-    rows = cursor.fetchall()
-    db_conn.close()
+    history_records = get_vendor_risk_history(vendor_id, user_company_id)
+    if not history_records:
+        db_conn = get_db()
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            SELECT * FROM risk_assessment_scores 
+            WHERE vendor_id = ? 
+            ORDER BY calculated_at ASC
+        """, (vendor_id,))
+        rows = cursor.fetchall()
+        db_conn.close()
+        history_records = [dict(r) for r in rows]
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.RISK_TREND_VIEWED,
+        resource=f"vendor:{vendor_id}:risk-history",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"count": len(history_records)}
+    )
     
-    return {"history": [dict(r) for r in rows]}
+    return {"history": history_records}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CYBERSECURITY 360° ASSESSMENT ENDPOINTS
@@ -2074,12 +2111,179 @@ def sync_vendor_vulnerabilities_endpoint(vendor_id: int, request: Request, sessi
         "synced_findings": synced
     }
 
+# ---------------------------------------------------------------------------
+# Risk-Based Vendor Tiering & Risk Trend Analysis Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/vendors/{vendor_id}/tier")
+def get_vendor_tier_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.RISK_ACCESS_DENIED,
+            resource=f"vendor:{vendor_id}:tier",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Vendor ownership verification failed"}
+        )
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    tier_info = get_vendor_tier_info(vendor_id, user_company_id)
+    if not tier_info:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+        
+    # If not yet calculated or needs evaluation
+    if not tier_info.get("calculated_tier") or not tier_info.get("rationale"):
+        calc_result = calculate_vendor_tier(tier_info)
+        calculated_tier = calc_result["calculated_tier"]
+        effective_tier = tier_info.get("tier_override") or calculated_tier
+        rationale = calc_result["rationale"]
+        
+        update_vendor_tier(vendor_id, user_company_id, calculated_tier, effective_tier, rationale, TIERING_VERSION)
+        
+        tier_info["calculated_tier"] = calculated_tier
+        tier_info["effective_tier"] = effective_tier
+        tier_info["tiering_version"] = TIERING_VERSION
+        tier_info["rationale"] = rationale
+        
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.VENDOR_TIER_CALCULATED,
+            resource=f"vendor:{vendor_id}:tier",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"calculated_tier": calculated_tier, "effective_tier": effective_tier}
+        )
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.VENDOR_TIER_VIEWED,
+        resource=f"vendor:{vendor_id}:tier",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"effective_tier": tier_info.get("effective_tier")}
+    )
+    
+    return tier_info
+
+
+@app.post("/api/vendors/{vendor_id}/tier-override")
+def override_vendor_tier_endpoint(
+    vendor_id: int, 
+    payload: TierOverrideRequest, 
+    request: Request, 
+    session = Depends(get_current_session)
+):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    user_role = session.get("role", "")
+    if user_role not in ("ENTERPRISE_ADMIN", "CISO"):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.RISK_ACCESS_DENIED,
+            resource=f"vendor:{vendor_id}:tier-override",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Manual tier override requires ENTERPRISE_ADMIN or CISO role"}
+        )
+        raise HTTPException(status_code=403, detail="Unauthorized: Tier override requires ENTERPRISE_ADMIN or CISO role")
+        
+    tier_upper = payload.tier.upper()
+    if tier_upper not in VALID_TIERS:
+        raise HTTPException(status_code=400, detail=f"Invalid tier '{payload.tier}'. Must be one of {sorted(list(VALID_TIERS))}")
+        
+    reason_clean = (payload.reason or "").strip()
+    if not reason_clean:
+        raise HTTPException(status_code=400, detail="Override reason is required and cannot be empty")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    updated_tier = override_vendor_tier(vendor_id, user_company_id, tier_upper, reason_clean, session["email"])
+    if not updated_tier:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.VENDOR_TIER_OVERRIDE,
+        resource=f"vendor:{vendor_id}:tier",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"tier_override": tier_upper, "reason": reason_clean}
+    )
+    
+    return updated_tier
+
+
+@app.get("/api/vendors/{vendor_id}/risk-trend")
+def get_vendor_risk_trend_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    history_records = get_vendor_risk_history(vendor_id, user_company_id)
+    trend_result = calculate_risk_trend(history_records)
+    
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.RISK_TREND_VIEWED,
+        resource=f"vendor:{vendor_id}:risk-trend",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"trend_state": trend_result.get("trend_state")}
+    )
+    
+    return trend_result
+
 # --- End Vendor Risk Scoring Endpoints ---
 
 if __name__ == "__main__":
     import uvicorn
     # Enforce workers=1 (Priority 3: SQLite multi-process safety)
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, workers=1)
+
 
 
 
