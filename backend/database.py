@@ -807,3 +807,77 @@ def delete_sub_vendor(sub_id: int):
     conn.close()
     return True
 
+def get_dashboard_metrics(company_id: int) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Total Vendors
+    cursor.execute("SELECT COUNT(*) as cnt FROM vendors WHERE company_id = ?", (company_id,))
+    total_vendors = cursor.fetchone()["cnt"]
+    
+    # High-Risk Vendors
+    cursor.execute("SELECT COUNT(*) as cnt FROM vendors WHERE company_id = ? AND risk_score >= 70", (company_id,))
+    high_risk_vendors = cursor.fetchone()["cnt"]
+    
+    # Pending Assessments (status = 'DRAFT')
+    cursor.execute("""
+        SELECT COUNT(*) as cnt FROM assessments a
+        JOIN vendors v ON a.vendor_id = v.id
+        WHERE v.company_id = ? AND a.status = 'DRAFT'
+    """, (company_id,))
+    pending_assessments = cursor.fetchone()["cnt"]
+    
+    # Expiring Certifications (< 30 days from now)
+    thirty_days_from_now = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    cursor.execute("""
+        SELECT COUNT(*) as cnt FROM compliance_frameworks cf
+        JOIN vendors v ON cf.vendor_id = v.id
+        WHERE v.company_id = ? AND cf.next_due_at < ?
+    """, (company_id, thirty_days_from_now))
+    expiring_certifications = cursor.fetchone()["cnt"]
+    
+    # Overall Risk Score
+    cursor.execute("SELECT AVG(risk_score) as avg_score FROM vendors WHERE company_id = ?", (company_id,))
+    row = cursor.fetchone()
+    overall_risk_score = int(row["avg_score"]) if row and row["avg_score"] is not None else 0
+    
+    # Risk Distribution
+    cursor.execute("""
+        SELECT 
+            CASE 
+                WHEN risk_score >= 70 THEN 'CRITICAL'
+                WHEN risk_score >= 40 THEN 'WATCH'
+                ELSE 'SAFE'
+            END as tier,
+            COUNT(*) as cnt 
+        FROM vendors 
+        WHERE company_id = ? 
+        GROUP BY tier
+    """, (company_id,))
+    distribution_rows = cursor.fetchall()
+    risk_distribution = {r["tier"]: r["cnt"] for r in distribution_rows}
+    
+    # Simple Risk Trend
+    cursor.execute("""
+        SELECT strftime('%Y-%m', calculated_at) as month, AVG(total_score) as avg_score
+        FROM risk_assessment_scores ras
+        JOIN vendors v ON ras.vendor_id = v.id
+        WHERE v.company_id = ?
+        GROUP BY month
+        ORDER BY month ASC
+        LIMIT 6
+    """, (company_id,))
+    trend_rows = cursor.fetchall()
+    risk_trend = [{"month": r["month"], "avg_score": round(r["avg_score"])} for r in trend_rows]
+    
+    conn.close()
+    
+    return {
+        "total_vendors": total_vendors,
+        "high_risk_vendors": high_risk_vendors,
+        "pending_assessments": pending_assessments,
+        "expiring_certifications": expiring_certifications,
+        "overall_risk_score": overall_risk_score,
+        "risk_distribution": risk_distribution,
+        "risk_trend": risk_trend
+    }

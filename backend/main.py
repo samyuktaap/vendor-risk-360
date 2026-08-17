@@ -14,6 +14,7 @@ from database import (
     add_compliance_framework, get_vendor_compliance_frameworks, update_compliance_framework, get_compliance_summary,
     create_remediation_task, get_vendor_remediation_tasks, update_remediation_task, get_remediation_summary,
     add_sub_vendor, get_sub_vendors, delete_sub_vendor,
+    get_dashboard_metrics,
     COMPLIANCE_FRAMEWORKS
 )
 from seed_data import seed_database
@@ -111,6 +112,13 @@ def health_check():
         "demo_mode": os.getenv("DEMO_MODE", "true").lower() == "true",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@app.get("/api/dashboard/metrics")
+def get_dashboard_metrics_endpoint(session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    return get_dashboard_metrics(user_company_id)
 
 @app.get("/api/vendors")
 def get_vendors(session = Depends(get_current_session)):

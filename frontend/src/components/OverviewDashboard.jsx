@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
   ShieldAlert, 
@@ -10,7 +10,11 @@ import {
   Trash2, 
   Flame, 
   ArrowUpRight,
-  Plus
+  Plus,
+  FileText,
+  Clock,
+  Activity,
+  AlertTriangle
 } from 'lucide-react';
 
 export default function OverviewDashboard({ 
@@ -25,15 +29,35 @@ export default function OverviewDashboard({
   const [filterRisk, setFilterRisk] = useState('ALL');
   const [searchFilter, setSearchFilter] = useState('');
   const [refreshingId, setRefreshingId] = useState(null);
+  
+  const [metrics, setMetrics] = useState({
+    total_vendors: 0,
+    high_risk_vendors: 0,
+    pending_assessments: 0,
+    expiring_certifications: 0,
+    overall_risk_score: 0,
+    risk_distribution: { CRITICAL: 0, WATCH: 0, SAFE: 0 },
+    risk_trend: []
+  });
+  const [metricsLoading, setMetricsLoading] = useState(true);
 
-  const totalCount = vendors.length;
-  const criticalVendors = vendors.filter(v => v.risk_score >= 70);
-  const watchVendors = vendors.filter(v => v.risk_score >= 40 && v.risk_score < 70);
-  const safeVendors = vendors.filter(v => v.risk_score < 40);
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/dashboard/metrics');
+        if (res.ok) {
+          const data = await res.json();
+          setMetrics(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch dashboard metrics:", err);
+      } finally {
+        setMetricsLoading(false);
+      }
+    };
+    fetchMetrics();
+  }, [vendors]); // Re-fetch when vendors change
 
-  const avgScore = totalCount > 0 
-    ? Math.round(vendors.reduce((acc, v) => acc + v.risk_score, 0) / totalCount) 
-    : 0;
 
   const filteredVendors = vendors.filter(v => {
     const matchesRisk = 
@@ -70,83 +94,146 @@ export default function OverviewDashboard({
   return (
     <div className="space-y-6 pb-12">
       {/* Overview Stat Cards Header */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Total Monitored Vendors */}
-        <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-emerald-950/20 group hover:border-emerald-500/30 transition-all duration-300">
+        <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-emerald-950/20 group hover:border-emerald-500/30 transition-all duration-300">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Monitored Portfolio</span>
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[#00f090]">
-              <Building2 className="w-5 h-5" />
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Total Vendors</span>
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[#00f090]">
+              <Building2 className="w-4 h-4" />
             </div>
           </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-100 font-mono tracking-tight">{totalCount}</span>
-            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-0.5">
-              <ArrowUpRight className="w-3.5 h-3.5 text-[#00f090]" /> Active
-            </span>
-          </div>
-          <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
-            <span className="text-emerald-400 font-semibold">{safeVendors.length} Safe</span>
-            <span>•</span>
-            <span className="text-amber-400 font-semibold">{watchVendors.length} Watch</span>
-            <span>•</span>
-            <span className="text-rose-400 font-semibold">{criticalVendors.length} Critical</span>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-slate-100 font-mono tracking-tight">{metricsLoading ? '-' : metrics.total_vendors}</span>
           </div>
         </div>
 
-        {/* Critical Risk Vendors */}
-        <div className="bg-[#0a0f1d] border border-rose-950/40 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-rose-950/20 group hover:border-rose-500/30 transition-all duration-300">
+        {/* High Risk Vendors */}
+        <div className="bg-[#0a0f1d] border border-rose-950/40 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-rose-950/20 group hover:border-rose-500/30 transition-all duration-300">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Critical Risk Vendors</span>
-            <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
-              <ShieldAlert className="w-5 h-5" />
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">High-Risk Vendors</span>
+            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+              <ShieldAlert className="w-4 h-4" />
             </div>
           </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-rose-400 font-mono tracking-tight">{criticalVendors.length}</span>
-            <span className="text-xs text-rose-400 font-semibold">Immediate Action</span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-400 truncate">
-            {criticalVendors.length > 0 ? `${criticalVendors[0].name} requires remediation` : 'No critical risk vendors detected'}
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-rose-400 font-mono tracking-tight">{metricsLoading ? '-' : metrics.high_risk_vendors}</span>
           </div>
         </div>
 
-        {/* Average Security Risk Score */}
-        <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-emerald-950/20 group hover:border-emerald-500/30 transition-all duration-300">
+        {/* Pending Assessments */}
+        <div className="bg-[#0a0f1d] border border-amber-950/40 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-amber-950/20 group hover:border-amber-500/30 transition-all duration-300">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Portfolio Risk Average</span>
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[#00f090]">
-              <TrendingUp className="w-5 h-5" />
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Pending Assessments</span>
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <FileText className="w-4 h-4" />
             </div>
           </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-100 font-mono tracking-tight">{avgScore}</span>
-            <span className="text-xs text-slate-400 font-mono">/ 100 max</span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-400">
-            Weighted composite risk score across all vendors
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-amber-400 font-mono tracking-tight">{metricsLoading ? '-' : metrics.pending_assessments}</span>
           </div>
         </div>
 
-        {/* Risk Contagion Quick Launcher */}
-        <div 
-          onClick={onNavigateToContagion}
-          className="bg-gradient-to-br from-[#0a0f1d] to-[#0d162a] border border-emerald-500/30 hover:border-emerald-500/60 rounded-2xl p-5 relative overflow-hidden shadow-lg shadow-emerald-950/40 cursor-pointer group transition-all duration-300"
-        >
+        {/* Expiring Certifications */}
+        <div className="bg-[#0a0f1d] border border-orange-950/40 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-orange-950/20 group hover:border-orange-500/30 transition-all duration-300">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Layers className="w-4 h-4 text-[#00f090]" /> Supply Chain Graph
-            </span>
-            <ChevronRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-1 transition-transform" />
-          </div>
-          <div className="mt-3">
-            <div className="text-sm font-bold text-slate-100 group-hover:text-[#00f090] transition-colors">
-              Risk Contagion Topology Map
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Expiring Certs</span>
+            <div className="w-8 h-8 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400">
+              <Clock className="w-4 h-4" />
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Visualize cascade vulnerability pathways and critical vendor dependencies.
-            </p>
           </div>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-orange-400 font-mono tracking-tight">{metricsLoading ? '-' : metrics.expiring_certifications}</span>
+          </div>
+        </div>
+
+        {/* Overall Risk Score */}
+        <div className="bg-[#0a0f1d] border border-indigo-950/40 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-indigo-950/20 group hover:border-indigo-500/30 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Overall Risk Score</span>
+            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+              <Activity className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-indigo-400 font-mono tracking-tight">{metricsLoading ? '-' : metrics.overall_risk_score}</span>
+            <span className="text-[10px] text-slate-500">/ 100</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Visualizations row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Risk Distribution */}
+        <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl p-5 shadow-xl">
+          <h3 className="text-sm font-bold text-slate-100 mb-4 flex items-center gap-2"><Layers className="w-4 h-4 text-[#00f090]"/> Vendor Risk Distribution</h3>
+          {metricsLoading ? (
+            <div className="h-24 flex items-center justify-center text-slate-500 text-xs">Loading distribution...</div>
+          ) : metrics.total_vendors === 0 ? (
+            <div className="h-24 flex items-center justify-center text-slate-500 text-xs">No vendors to display</div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-rose-400 font-semibold">CRITICAL (70+)</span>
+                  <span className="text-slate-400">{metrics.risk_distribution.CRITICAL || 0}</span>
+                </div>
+                <div className="w-full bg-slate-800 rounded-full h-1.5">
+                  <div className="bg-rose-500 h-1.5 rounded-full" style={{ width: `${((metrics.risk_distribution.CRITICAL || 0) / metrics.total_vendors) * 100}%` }}></div>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-amber-400 font-semibold">WATCH (40-69)</span>
+                  <span className="text-slate-400">{metrics.risk_distribution.WATCH || 0}</span>
+                </div>
+                <div className="w-full bg-slate-800 rounded-full h-1.5">
+                  <div className="bg-amber-500 h-1.5 rounded-full" style={{ width: `${((metrics.risk_distribution.WATCH || 0) / metrics.total_vendors) * 100}%` }}></div>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[#00f090] font-semibold">SAFE (&lt;40)</span>
+                  <span className="text-slate-400">{metrics.risk_distribution.SAFE || 0}</span>
+                </div>
+                <div className="w-full bg-slate-800 rounded-full h-1.5">
+                  <div className="bg-[#00f090] h-1.5 rounded-full" style={{ width: `${((metrics.risk_distribution.SAFE || 0) / metrics.total_vendors) * 100}%` }}></div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Risk Trend */}
+        <div className="bg-[#0a0f1d] border border-emerald-950/40 rounded-2xl p-5 shadow-xl">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-400"/> Risk Trend</h3>
+            <span className="text-[10px] text-slate-400">Avg Score by Month</span>
+          </div>
+          {metricsLoading ? (
+            <div className="h-24 flex items-center justify-center text-slate-500 text-xs">Loading trend...</div>
+          ) : metrics.risk_trend.length === 0 ? (
+            <div className="h-24 flex items-center justify-center text-slate-500 text-xs">No historical risk data</div>
+          ) : (
+            <div className="h-24 flex items-end gap-2 px-2">
+              {metrics.risk_trend.map((point, idx) => {
+                const heightPercent = Math.max(10, (point.avg_score / 100) * 100);
+                const colorClass = point.avg_score >= 70 ? 'bg-rose-500/80 hover:bg-rose-400' : point.avg_score >= 40 ? 'bg-amber-500/80 hover:bg-amber-400' : 'bg-emerald-500/80 hover:bg-emerald-400';
+                return (
+                  <div key={idx} className="flex-1 flex flex-col items-center gap-2 group">
+                    <div className="w-full relative flex items-end justify-center h-20">
+                      <div className={`w-full max-w-[24px] rounded-t-sm transition-all duration-300 ${colorClass}`} style={{ height: `${heightPercent}%` }}>
+                        <div className="opacity-0 group-hover:opacity-100 absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-slate-200 text-[9px] py-0.5 px-1.5 rounded whitespace-nowrap z-10 transition-opacity">
+                          Avg: {point.avg_score}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[9px] text-slate-500 uppercase">{point.month.split('-')[1]}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

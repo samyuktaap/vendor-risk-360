@@ -336,6 +336,7 @@ check("Sanctions: sanctions_score in 0-100", 0 <= sanc.get("sanctions_score", -1
 
 # Scikit-Learn & SHAP ML Risk Service
 from services.mlRiskService import calculate_shap_vendor_risk
+from services.ai_summary_engine import generate_ai_executive_summary
 shap_res = calculate_shap_vendor_risk({
     "name": "Acme Corp",
     "news_score": 45,
