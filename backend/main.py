@@ -23,6 +23,12 @@ from database import (
     get_vendor_latest_cybersecurity_score,
     get_vendor_cybersecurity_history,
     review_cybersecurity_evidence,
+    get_vendor_assets,
+    add_vendor_asset,
+    get_vendor_vulnerabilities,
+    get_vulnerability_by_id,
+    update_vulnerability_status,
+    get_vendor_vulnerability_summary_counts,
     COMPLIANCE_FRAMEWORKS
 )
 from seed_data import seed_database
@@ -31,6 +37,13 @@ from services.mlRiskService import calculate_shap_vendor_risk
 from services.domainVerificationService import verify_vendor_existence
 from services.cybersecurity_catalog import get_questions_catalog, get_question_by_id, CYBERSECURITY_DOMAINS
 from services.cybersecurity_scoring import calculate_cybersecurity_score
+from services.vulnerability_service import (
+    calculate_vulnerability_risk_score,
+    get_sla_status,
+    sync_vendor_vulnerabilities_from_feeds,
+    VALID_SEVERITIES,
+    VALID_STATUSES
+)
 from services.audit_log_service import get_audit_log, AuditAction
 
 
@@ -48,6 +61,15 @@ class CybersecurityAnswersSave(BaseModel):
 class EvidenceReviewRequest(BaseModel):
     status: str
     notes: Optional[str] = None
+
+class VulnerabilityStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="New vulnerability status", example="IN_PROGRESS")
+    notes: Optional[str] = Field(default=None, description="Optional remediation notes")
+
+class AssetCreateRequest(BaseModel):
+    asset_type: str = Field(..., description="Asset type: DOMAIN, IP, SOFTWARE, HOST, SERVICE", example="DOMAIN")
+    hostname: str = Field(..., description="Asset identifier, hostname, or software name", example="api.vendor.com")
+    authorized: Optional[bool] = Field(default=True, description="Whether asset is authorized for scanning")
 
 
 
@@ -1769,11 +1791,295 @@ def review_cybersecurity_evidence_endpoint(assessment_id: int, question_id: str,
     
     return {"status": "success", "evidence_status": status_upper}
 
+# ---------------------------------------------------------------------------
+# Vulnerability Management Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/vendors/{vendor_id}/vulnerabilities")
+def get_vendor_vulnerabilities_endpoint(
+    vendor_id: int, 
+    request: Request,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    asset_id: Optional[int] = None,
+    search: Optional[str] = None,
+    session = Depends(get_current_session)
+):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.VULNERABILITY_ACCESS_DENIED,
+            resource=f"vendor:{vendor_id}:vulnerabilities",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Vendor ownership verification failed"}
+        )
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    findings = get_vendor_vulnerabilities(vendor_id, user_company_id, severity, status, asset_id, search)
+    
+    # Enrich with SLA status
+    enriched = []
+    for f in findings:
+        item = dict(f)
+        item["sla_status"] = get_sla_status(item.get("status", "OPEN"), item.get("remediation_due_at"))
+        enriched.append(item)
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.VULNERABILITY_VIEWED,
+        resource=f"vendor:{vendor_id}:vulnerabilities",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"count": len(enriched)}
+    )
+    
+    return enriched
+
+
+@app.get("/api/vendors/{vendor_id}/vulnerability-summary")
+def get_vendor_vulnerability_summary_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    summary = get_vendor_vulnerability_summary_counts(vendor_id, user_company_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+        
+    all_findings = get_vendor_vulnerabilities(vendor_id, user_company_id)
+    risk_info = calculate_vulnerability_risk_score(all_findings)
+    
+    empty_message = "No verified vulnerabilities found." if summary["total"] == 0 else None
+    
+    return {
+        "vendor_id": vendor_id,
+        "summary": summary,
+        "risk_score": risk_info,
+        "message": empty_message
+    }
+
+
+@app.get("/api/vulnerabilities/{vulnerability_id}")
+def get_vulnerability_by_id_endpoint(vulnerability_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    finding = get_vulnerability_by_id(vulnerability_id, user_company_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+        
+    # If role is VENDOR, verify they own this vendor
+    db = get_db()
+    if not verify_vendor_ownership(finding["vendor_id"], session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+    db.close()
+    
+    item = dict(finding)
+    item["sla_status"] = get_sla_status(item.get("status", "OPEN"), item.get("remediation_due_at"))
+    
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.VULNERABILITY_VIEWED,
+        resource=f"vulnerability:{vulnerability_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"cve_id": item.get("cve_id")}
+    )
+    
+    return item
+
+
+@app.post("/api/vulnerabilities/{vulnerability_id}/status")
+def update_vulnerability_status_endpoint(
+    vulnerability_id: int, 
+    payload: VulnerabilityStatusUpdateRequest, 
+    request: Request, 
+    session = Depends(get_current_session)
+):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    user_role = session.get("role", "")
+    if user_role not in ("ENTERPRISE_ADMIN", "CISO", "ANALYST"):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.VULNERABILITY_ACCESS_DENIED,
+            resource=f"vulnerability:{vulnerability_id}:status",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Role not authorized to update remediation status"}
+        )
+        raise HTTPException(status_code=403, detail="Unauthorized: Role cannot update vulnerability status")
+        
+    status_upper = payload.status.upper()
+    if status_upper not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{payload.status}'. Must be one of {sorted(list(VALID_STATUSES))}")
+        
+    updated = update_vulnerability_status(vulnerability_id, user_company_id, status_upper, payload.notes)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.VULNERABILITY_STATUS_CHANGED,
+        resource=f"vulnerability:{vulnerability_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"new_status": status_upper, "notes": payload.notes}
+    )
+    
+    updated_dict = dict(updated)
+    updated_dict["sla_status"] = get_sla_status(updated_dict.get("status", "OPEN"), updated_dict.get("remediation_due_at"))
+    return updated_dict
+
+
+@app.get("/api/vendors/{vendor_id}/assets")
+def get_vendor_assets_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    return get_vendor_assets(vendor_id, user_company_id)
+
+
+@app.post("/api/vendors/{vendor_id}/assets")
+def add_vendor_asset_endpoint(vendor_id: int, payload: AssetCreateRequest, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    user_role = session.get("role", "")
+    if user_role not in ("ENTERPRISE_ADMIN", "CISO"):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.VULNERABILITY_ACCESS_DENIED,
+            resource=f"vendor:{vendor_id}:assets",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Asset management requires ENTERPRISE_ADMIN or CISO role"}
+        )
+        raise HTTPException(status_code=403, detail="Unauthorized: Asset creation requires ENTERPRISE_ADMIN or CISO role")
+        
+    asset_type = payload.asset_type.upper()
+    if asset_type not in ("DOMAIN", "IP", "SOFTWARE", "HOST", "SERVICE"):
+        raise HTTPException(status_code=400, detail="Invalid asset_type. Must be DOMAIN, IP, SOFTWARE, HOST, or SERVICE.")
+        
+    if not payload.hostname or not payload.hostname.strip():
+        raise HTTPException(status_code=400, detail="Hostname or asset target cannot be empty")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    asset = add_vendor_asset(vendor_id, user_company_id, asset_type, payload.hostname, payload.authorized if payload.authorized is not None else True)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Failed to add asset: vendor not found")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.VULNERABILITY_ASSET_ADDED,
+        resource=f"vendor:{vendor_id}:asset:{asset['id']}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"asset_type": asset_type, "hostname": payload.hostname, "authorized": asset.get("authorized")}
+    )
+    
+    return asset
+
+
+@app.post("/api/vendors/{vendor_id}/vulnerabilities/sync")
+def sync_vendor_vulnerabilities_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    user_role = session.get("role", "")
+    if user_role not in ("ENTERPRISE_ADMIN", "CISO", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized: Vulnerability sync requires analyst or admin role")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+        
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM vendors WHERE id = ? AND company_id = ?", (vendor_id, user_company_id))
+    vendor_row = cursor.fetchone()
+    if not vendor_row:
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found")
+        
+    vendor_dict = dict(vendor_row)
+    assets = get_vendor_assets(vendor_id, user_company_id)
+    
+    synced = sync_vendor_vulnerabilities_from_feeds(vendor_dict, assets, db)
+    db.close()
+    
+    return {
+        "status": "success",
+        "synced_count": len(synced),
+        "synced_findings": synced
+    }
+
 # --- End Vendor Risk Scoring Endpoints ---
 
 if __name__ == "__main__":
     import uvicorn
     # Enforce workers=1 (Priority 3: SQLite multi-process safety)
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, workers=1)
+
 
 

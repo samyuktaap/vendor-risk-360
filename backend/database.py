@@ -396,6 +396,61 @@ def init_db():
         )
     """)
 
+    # Vulnerability Management Tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS vendor_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL,
+            asset_type TEXT NOT NULL,
+            hostname TEXT NOT NULL,
+            authorized INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS vulnerabilities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            vendor_id INTEGER NOT NULL,
+            asset_id INTEGER,
+            cve_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            severity TEXT NOT NULL,
+            cvss_score REAL DEFAULT 0.0,
+            detected_at TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'NVD',
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            remediation_due_at TEXT,
+            resolved_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (asset_id) REFERENCES vendor_assets (id) ON DELETE SET NULL,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            vendor_id INTEGER NOT NULL,
+            alert_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            created_at TEXT NOT NULL,
+            is_read INTEGER DEFAULT 0,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
+        )
+    """)
+
     # Add company_id to users if it doesn't exist
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN company_id INTEGER")
@@ -917,6 +972,26 @@ def get_dashboard_metrics(company_id: int) -> dict:
     """, (company_id,))
     trend_rows = cursor.fetchall()
     risk_trend = [{"month": r["month"], "avg_score": round(r["avg_score"])} for r in trend_rows]
+
+    # Vulnerability metrics for company's vendors
+    now_iso = datetime.utcnow().isoformat()
+    cursor.execute("""
+        SELECT COUNT(*) as cnt FROM vulnerabilities
+        WHERE company_id = ? AND severity = 'CRITICAL' AND status IN ('OPEN', 'IN_PROGRESS')
+    """, (company_id,))
+    critical_vulnerabilities = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) as cnt FROM vulnerabilities
+        WHERE company_id = ? AND severity = 'HIGH' AND status IN ('OPEN', 'IN_PROGRESS')
+    """, (company_id,))
+    open_high_vulnerabilities = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) as cnt FROM vulnerabilities
+        WHERE company_id = ? AND status IN ('OPEN', 'IN_PROGRESS') AND remediation_due_at IS NOT NULL AND remediation_due_at < ?
+    """, (company_id, now_iso))
+    overdue_vulnerabilities = cursor.fetchone()["cnt"]
     
     conn.close()
     
@@ -927,7 +1002,10 @@ def get_dashboard_metrics(company_id: int) -> dict:
         "expiring_certifications": expiring_certifications,
         "overall_risk_score": overall_risk_score,
         "risk_distribution": risk_distribution,
-        "risk_trend": risk_trend
+        "risk_trend": risk_trend,
+        "critical_vulnerabilities": critical_vulnerabilities,
+        "open_high_vulnerabilities": open_high_vulnerabilities,
+        "overdue_vulnerabilities": overdue_vulnerabilities
     }
 
 # ---------------------------------------------------------------------------
@@ -1139,4 +1217,180 @@ def review_cybersecurity_evidence(assessment_id: int, question_id: str, company_
     conn.commit()
     conn.close()
     return updated
+
+# ---------------------------------------------------------------------------
+# Vulnerability Management Database Helpers
+# ---------------------------------------------------------------------------
+
+def get_vendor_assets(vendor_id: int, company_id: int) -> list:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM vendor_assets 
+        WHERE vendor_id = ? AND company_id = ?
+        ORDER BY created_at DESC
+    """, (vendor_id, company_id))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def add_vendor_asset(vendor_id: int, company_id: int, asset_type: str, hostname: str, authorized: bool = True) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Verify vendor ownership
+    cursor.execute("SELECT id FROM vendors WHERE id = ? AND company_id = ?", (vendor_id, company_id))
+    if not cursor.fetchone():
+        conn.close()
+        return None
+        
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        INSERT INTO vendor_assets (vendor_id, company_id, asset_type, hostname, authorized, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (vendor_id, company_id, asset_type.upper(), hostname.strip(), 1 if authorized else 0, now))
+    asset_id = cursor.lastrowid
+    conn.commit()
+    
+    cursor.execute("SELECT * FROM vendor_assets WHERE id = ?", (asset_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_vendor_vulnerabilities(vendor_id: int, company_id: int, severity: str = None, status: str = None, asset_id: int = None, search: str = None) -> list:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT v.*, a.hostname as asset_hostname, a.asset_type as asset_type
+        FROM vulnerabilities v
+        LEFT JOIN vendor_assets a ON v.asset_id = a.id
+        WHERE v.vendor_id = ? AND v.company_id = ?
+    """
+    params = [vendor_id, company_id]
+    
+    if severity:
+        query += " AND UPPER(v.severity) = ?"
+        params.append(severity.upper())
+        
+    if status:
+        query += " AND UPPER(v.status) = ?"
+        params.append(status.upper())
+        
+    if asset_id:
+        query += " AND v.asset_id = ?"
+        params.append(asset_id)
+        
+    if search:
+        query += " AND (v.cve_id LIKE ? OR v.title LIKE ? OR v.description LIKE ?)"
+        search_param = f"%{search}%"
+        params.extend([search_param, search_param, search_param])
+        
+    query += " ORDER BY CASE v.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 4 ELSE 5 END, v.detected_at DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_vulnerability_by_id(vulnerability_id: int, company_id: int) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT v.*, a.hostname as asset_hostname, a.asset_type as asset_type, vn.name as vendor_name
+        FROM vulnerabilities v
+        LEFT JOIN vendor_assets a ON v.asset_id = a.id
+        JOIN vendors vn ON v.vendor_id = vn.id
+        WHERE v.id = ? AND v.company_id = ?
+    """, (vulnerability_id, company_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_vulnerability_status(vulnerability_id: int, company_id: int, new_status: str, notes: str = None) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM vulnerabilities WHERE id = ? AND company_id = ?", (vulnerability_id, company_id))
+    existing = cursor.fetchone()
+    if not existing:
+        conn.close()
+        return None
+        
+    now = datetime.utcnow().isoformat()
+    resolved_at = now if new_status.upper() in ("RESOLVED", "MITIGATED") else None
+    
+    cursor.execute("""
+        UPDATE vulnerabilities
+        SET status = ?, resolved_at = ?, updated_at = ?
+        WHERE id = ? AND company_id = ?
+    """, (new_status.upper(), resolved_at, now, vulnerability_id, company_id))
+    conn.commit()
+    
+    cursor.execute("""
+        SELECT v.*, a.hostname as asset_hostname, a.asset_type as asset_type, vn.name as vendor_name
+        FROM vulnerabilities v
+        LEFT JOIN vendor_assets a ON v.asset_id = a.id
+        JOIN vendors vn ON v.vendor_id = vn.id
+        WHERE v.id = ? AND v.company_id = ?
+    """, (vulnerability_id, company_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_vendor_vulnerability_summary_counts(vendor_id: int, company_id: int) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Verify vendor exists and belongs to company
+    cursor.execute("SELECT id FROM vendors WHERE id = ? AND company_id = ?", (vendor_id, company_id))
+    if not cursor.fetchone():
+        conn.close()
+        return None
+        
+    now_iso = datetime.utcnow().isoformat()
+    
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN severity = 'CRITICAL' THEN 1 ELSE 0 END) as critical_count,
+            SUM(CASE WHEN severity = 'HIGH' THEN 1 ELSE 0 END) as high_count,
+            SUM(CASE WHEN severity = 'MEDIUM' THEN 1 ELSE 0 END) as medium_count,
+            SUM(CASE WHEN severity = 'LOW' THEN 1 ELSE 0 END) as low_count,
+            SUM(CASE WHEN severity NOT IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW') THEN 1 ELSE 0 END) as unknown_count,
+            SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_count,
+            SUM(CASE WHEN status = 'IN_PROGRESS' THEN 1 ELSE 0 END) as in_progress_count,
+            SUM(CASE WHEN status = 'MITIGATED' THEN 1 ELSE 0 END) as mitigated_count,
+            SUM(CASE WHEN status = 'RESOLVED' THEN 1 ELSE 0 END) as resolved_count,
+            SUM(CASE WHEN status = 'ACCEPTED_RISK' THEN 1 ELSE 0 END) as accepted_risk_count,
+            SUM(CASE WHEN status IN ('OPEN', 'IN_PROGRESS') AND remediation_due_at IS NOT NULL AND remediation_due_at < ? THEN 1 ELSE 0 END) as overdue_count
+        FROM vulnerabilities
+        WHERE vendor_id = ? AND company_id = ?
+    """, (now_iso, vendor_id, company_id))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return {
+            "total": 0, "critical_count": 0, "high_count": 0, "medium_count": 0, "low_count": 0, "unknown_count": 0,
+            "open_count": 0, "in_progress_count": 0, "mitigated_count": 0, "resolved_count": 0, "accepted_risk_count": 0,
+            "overdue_count": 0
+        }
+        
+    return {
+        "total": row["total"] or 0,
+        "critical_count": row["critical_count"] or 0,
+        "high_count": row["high_count"] or 0,
+        "medium_count": row["medium_count"] or 0,
+        "low_count": row["low_count"] or 0,
+        "unknown_count": row["unknown_count"] or 0,
+        "open_count": row["open_count"] or 0,
+        "in_progress_count": row["in_progress_count"] or 0,
+        "mitigated_count": row["mitigated_count"] or 0,
+        "resolved_count": row["resolved_count"] or 0,
+        "accepted_risk_count": row["accepted_risk_count"] or 0,
+        "overdue_count": row["overdue_count"] or 0
+    }
+
 

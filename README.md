@@ -9,6 +9,7 @@ VendorRisk 360 continuously evaluates enterprise vendors across **live security 
 ## 🌟 Key Features
 
 - **🛡️ Cybersecurity 360° Assessment Module**: Comprehensive 12-domain vendor cybersecurity assessment featuring deterministic 0–100 risk scoring (Scoring Engine v1.0), evidence document verification workflows, company data isolation, and RBAC-controlled evidence reviews.
+- **🔍 Vendor Vulnerability Management Module**: Real CVE telemetry correlation against authorized vendor assets via NIST NVD and US CISA KEV feeds, remediation SLA tracking (`CRITICAL`: 7d, `HIGH`: 14d, `MEDIUM`: 30d, `LOW`: 60d), deterministic 0–100 vulnerability risk scoring (v1.0), status lifecycle (`OPEN`, `IN_PROGRESS`, `MITIGATED`, `RESOLVED`, `ACCEPTED_RISK`), and anti-IDOR protections.
 - **📈 MVP Executive Risk Dashboard**: Multi-tenant, company-scoped executive dashboard tracking Total Vendors, High-Risk Vendors, Pending Assessments, Expiring Certifications, Overall Risk Score, Risk Tier Distribution, and Historical Risk Trends.
 - **🌐 Live No-Key Cyber Radar Feeds**: Integrates live threat intelligence from Google News RSS, Yahoo Finance Market Quotes, US CISA Known Exploited Vulnerabilities, Google Public DNS, and direct HTTPS socket probes.
 - **🕸️ Third-Party Risk Contagion Map**: Radial topology network placing your central organization at the core, connected to vendor nodes via color-coded data propagation lines (Rose Red hazard for scores $\ge 70$).

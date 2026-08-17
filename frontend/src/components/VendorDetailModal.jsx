@@ -34,6 +34,7 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianG
 import RiskScoreRing from './RiskScoreRing';
 import RiskQuestionnaire from './RiskQuestionnaire';
 import CybersecurityAssessment from './CybersecurityAssessment';
+import VulnerabilityManagement from './VulnerabilityManagement';
 
 export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, currentUser }) {
   const [data, setData] = useState(null);
@@ -591,6 +592,17 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, 
                 Cybersecurity 360°
               </button>
               <button
+                onClick={() => setActiveTab('vulnerabilities')}
+                className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
+                  activeTab === 'vulnerabilities'
+                    ? 'border-cyan-400 text-cyan-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                Vulnerability Management
+              </button>
+              <button
                 onClick={() => setActiveTab('assessment')}
                 className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
                   activeTab === 'assessment'
@@ -732,6 +744,14 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, 
               <CybersecurityAssessment 
                 vendorId={vendorId} 
                 onScoreUpdated={fetchDeterministicScore} 
+              />
+            )}
+
+            {/* TAB CONTENT: VULNERABILITY MANAGEMENT */}
+            {activeTab === 'vulnerabilities' && (
+              <VulnerabilityManagement 
+                vendorId={vendorId} 
+                userRole={currentUser?.role} 
               />
             )}
 
