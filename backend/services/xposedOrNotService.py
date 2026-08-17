@@ -22,8 +22,10 @@ def check_xposedornot(email: str) -> Dict[str, Any]:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            breaches = data.get("breaches", [[]])[0]
-            if breaches:
+            breaches = data.get("breaches")
+            if isinstance(breaches, list) and breaches and isinstance(breaches[0], list):
+                breaches = breaches[0]
+            if breaches and isinstance(breaches, list):
                 result["breach_status"] = "Breached"
                 result["number_of_breaches"] = len(breaches)
                 result["breach_names"] = breaches

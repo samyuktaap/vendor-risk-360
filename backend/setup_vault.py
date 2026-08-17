@@ -7,8 +7,16 @@ def main():
     client = hvac.Client(url="http://127.0.0.1:8200", token="my-root-token")
     
     # Verify connection
-    if not client.is_authenticated():
-        print("Vault not authenticated!")
+    try:
+        if not client.is_authenticated():
+            print("Vault not authenticated! Did you start Vault with the correct root token?")
+            sys.exit(1)
+    except Exception as e:
+        print("\n[ERROR] Could not connect to HashiCorp Vault.")
+        print("Please ensure the Vault dev server is running.")
+        print("You can start it in a new terminal using:")
+        print("    vault server -dev -dev-root-token-id=\"my-root-token\"")
+        print(f"\nDetails: {e}")
         sys.exit(1)
         
     # Enable transit engine if not already enabled

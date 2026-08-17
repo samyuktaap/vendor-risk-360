@@ -18,12 +18,22 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
 
+    # Companies Table (Multi-Tenancy)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        )
+    """)
+
     # Vendors Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vendors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            domain TEXT UNIQUE NOT NULL,
+            domain TEXT NOT NULL,
             email TEXT,
             ip_address TEXT,
             software TEXT,
@@ -71,6 +81,7 @@ def init_db():
 
     # Column migrations for existing SQLite DB files
     for col_def in [
+        "company_id INTEGER",
         "email TEXT",
         "ip_address TEXT",
         "software TEXT",
@@ -312,6 +323,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id      INTEGER NOT NULL,
             email           TEXT UNIQUE NOT NULL,
             name            TEXT NOT NULL,
             google_sub      TEXT UNIQUE NOT NULL,
@@ -335,6 +347,26 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     """)
+
+    # Add company_id to users if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN company_id INTEGER")
+    except Exception:
+        pass
+
+    # Multi-tenancy Migration: Create a default 'Demo Company' and assign existing records to it
+    cursor.execute("SELECT id FROM companies WHERE name = 'Demo Company'")
+    demo_company = cursor.fetchone()
+    if not demo_company:
+        now = datetime.utcnow().isoformat()
+        cursor.execute("INSERT INTO companies (name, created_at) VALUES (?, ?)", ("Demo Company", now))
+        demo_company_id = cursor.lastrowid
+    else:
+        demo_company_id = demo_company["id"]
+
+    # Assign all existing users and vendors to Demo Company if they have no company_id
+    cursor.execute("UPDATE users SET company_id = ? WHERE company_id IS NULL", (demo_company_id,))
+    cursor.execute("UPDATE vendors SET company_id = ? WHERE company_id IS NULL", (demo_company_id,))
 
     conn.commit()
     conn.close()
@@ -384,7 +416,7 @@ def add_incident(vendor_id: int, title: str, description: str, category: str, se
     conn.close()
     return incident_id
 
-def get_incidents(vendor_id: int = None):
+def get_incidents(vendor_id: int = None, company_id: int = None):
     conn = get_db()
     cursor = conn.cursor()
     if vendor_id:
@@ -395,6 +427,14 @@ def get_incidents(vendor_id: int = None):
             WHERE i.vendor_id = ?
             ORDER BY i.id DESC
         """, (vendor_id,))
+    elif company_id:
+        cursor.execute("""
+            SELECT i.*, v.name as vendor_name, v.domain as vendor_domain 
+            FROM incidents i
+            JOIN vendors v ON i.vendor_id = v.id
+            WHERE v.company_id = ?
+            ORDER BY i.id DESC
+        """, (company_id,))
     else:
         cursor.execute("""
             SELECT i.*, v.name as vendor_name, v.domain as vendor_domain 
@@ -544,19 +584,33 @@ def update_compliance_framework(framework_id: int, compliance_score: int, gaps_i
     conn.close()
     return True
 
-def get_compliance_summary():
-    """Get overall compliance statistics across all vendors."""
+def get_compliance_summary(company_id: int = None):
+    """Get overall compliance statistics across all vendors or scoped to company."""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            framework_name,
-            COUNT(*) as vendor_count,
-            AVG(compliance_score) as avg_score,
-            SUM(CASE WHEN status = 'ASSESSED' THEN 1 ELSE 0 END) as assessed_count,
-            SUM(CASE WHEN next_due_at < datetime('now') THEN 1 ELSE 0 END) as overdue_count
-        FROM compliance_frameworks
-        GROUP BY framework_name
+    if company_id:
+        cursor.execute("""
+            SELECT 
+                cf.framework_name,
+                COUNT(*) as vendor_count,
+                AVG(cf.compliance_score) as avg_score,
+                SUM(CASE WHEN cf.status = 'ASSESSED' THEN 1 ELSE 0 END) as assessed_count,
+                SUM(CASE WHEN cf.next_due_at < datetime('now') THEN 1 ELSE 0 END) as overdue_count
+            FROM compliance_frameworks cf
+            JOIN vendors v ON cf.vendor_id = v.id
+            WHERE v.company_id = ?
+            GROUP BY cf.framework_name
+        """, (company_id,))
+    else:
+        cursor.execute("""
+            SELECT 
+                framework_name,
+                COUNT(*) as vendor_count,
+                AVG(compliance_score) as avg_score,
+                SUM(CASE WHEN status = 'ASSESSED' THEN 1 ELSE 0 END) as assessed_count,
+                SUM(CASE WHEN next_due_at < datetime('now') THEN 1 ELSE 0 END) as overdue_count
+            FROM compliance_frameworks
+            GROUP BY framework_name
     """)
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
@@ -603,21 +657,36 @@ def update_remediation_task(task_id: int, status: str):
     conn.close()
     return True
 
-def get_remediation_summary():
-    """Get overall remediation task statistics."""
+def get_remediation_summary(company_id: int = None):
+    """Get overall remediation task statistics or scoped to company."""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            priority,
-            COUNT(*) as task_count,
-            SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_count,
-            SUM(CASE WHEN status = 'IN_PROGRESS' THEN 1 ELSE 0 END) as in_progress_count,
-            SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_count,
-            SUM(CASE WHEN due_date < datetime('now') AND status NOT IN ('COMPLETED', 'CLOSED') THEN 1 ELSE 0 END) as overdue_count
-        FROM remediation_tasks
-        GROUP BY priority
-    """)
+    if company_id:
+        cursor.execute("""
+            SELECT 
+                rt.priority,
+                COUNT(*) as task_count,
+                SUM(CASE WHEN rt.status = 'OPEN' THEN 1 ELSE 0 END) as open_count,
+                SUM(CASE WHEN rt.status = 'IN_PROGRESS' THEN 1 ELSE 0 END) as in_progress_count,
+                SUM(CASE WHEN rt.status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_count,
+                SUM(CASE WHEN rt.due_date < datetime('now') AND rt.status NOT IN ('COMPLETED', 'CLOSED') THEN 1 ELSE 0 END) as overdue_count
+            FROM remediation_tasks rt
+            JOIN vendors v ON rt.vendor_id = v.id
+            WHERE v.company_id = ?
+            GROUP BY rt.priority
+        """, (company_id,))
+    else:
+        cursor.execute("""
+            SELECT 
+                priority,
+                COUNT(*) as task_count,
+                SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_count,
+                SUM(CASE WHEN status = 'IN_PROGRESS' THEN 1 ELSE 0 END) as in_progress_count,
+                SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_count,
+                SUM(CASE WHEN due_date < datetime('now') AND status NOT IN ('COMPLETED', 'CLOSED') THEN 1 ELSE 0 END) as overdue_count
+            FROM remediation_tasks
+            GROUP BY priority
+        """)
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows

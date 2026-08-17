@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
-from services.auth_service import get_current_session, get_current_user_with_mfa, SESSION_COOKIE_NAME
+from services.auth_service import get_current_session, get_current_user_with_mfa, SESSION_COOKIE_NAME, verify_vendor_ownership, verify_assessment_ownership
 
 from database import (
     init_db, get_db, get_quota_stats,
@@ -27,7 +27,7 @@ app = FastAPI(title="VendorRisk 360 API", version="1.0.0")
 # Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://localhost:5175"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -114,6 +114,10 @@ def health_check():
 
 @app.get("/api/vendors")
 def get_vendors(session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
@@ -136,8 +140,9 @@ def get_vendors(session = Depends(get_current_session)):
                   AND status IN ('OPEN', 'INVESTIGATING')
             ), 0) AS critical_active
         FROM vendors v
+        WHERE v.company_id = ?
         ORDER BY v.risk_score DESC
-    """)
+    """, (user_company_id,))
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -146,6 +151,11 @@ def get_vendors(session = Depends(get_current_session)):
 def add_vendor(vendor: VendorCreate, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    
     conn = get_db()
     cursor = conn.cursor()
 
@@ -154,11 +164,11 @@ def add_vendor(vendor: VendorCreate, session = Depends(get_current_user_with_mfa
         conn.close()
         raise HTTPException(status_code=400, detail=f"Invalid domain format: '{vendor.domain}'. Must be e.g. company.com")
 
-    # Check for existing domain
-    cursor.execute("SELECT id FROM vendors WHERE domain = ?", (domain_clean,))
+    # Check for existing domain within the same company
+    cursor.execute("SELECT id FROM vendors WHERE domain = ? AND company_id = ?", (domain_clean, user_company_id))
     if cursor.fetchone():
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Vendor with domain '{domain_clean}' already exists.")
+        raise HTTPException(status_code=400, detail=f"Vendor with domain '{domain_clean}' already exists in your company.")
 
     # Execute Multi-Probe Domain Existence Verification (DNS + HTTPS + Syntax)
     verification = verify_vendor_existence(domain_clean)
@@ -196,8 +206,8 @@ def add_vendor(vendor: VendorCreate, session = Depends(get_current_user_with_mfa
     cursor.execute("""
         INSERT INTO vendors (name, domain, sector, risk_tier, risk_score, hibp_score, news_score, sanctions_score, abuse_score,
                             criticality_tier, data_sensitivity, contract_value, custom_ticker, compliance_certs,
-                            last_checked_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            last_checked_at, created_at, company_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         vendor.name,
         domain_clean,
@@ -214,7 +224,8 @@ def add_vendor(vendor: VendorCreate, session = Depends(get_current_user_with_mfa
         vendor.custom_ticker or None,
         vendor.compliance_certs or "SOC2 Type II",
         now,
-        now
+        now,
+        user_company_id
     ))
     vendor_id = cursor.lastrowid
 
@@ -264,6 +275,11 @@ def get_vendor_detail(vendor_id: int, session = Depends(get_current_session)):
         raise HTTPException(status_code=404, detail="Vendor not found.")
 
     v = dict(row)
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     score_data = compute_vendor_risk_score(
         domain=v["domain"], 
         vendor_name=v["name"], 
@@ -284,6 +300,11 @@ def get_vendor_detail(vendor_id: int, session = Depends(get_current_session)):
 def refresh_vendor_risk(vendor_id: int, session = Depends(get_current_session)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     """Manual trigger to re-check API risk scores for a single vendor."""
     conn = get_db()
     cursor = conn.cursor()
@@ -378,6 +399,23 @@ def delete_vendor(vendor_id: int, request: Request, current_user = Depends(get_c
             session_id=current_user["session_id"]
         )
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, current_user, get_db()):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.PERMISSION_DENIED,
+            resource=f"vendor:{vendor_id}:delete",
+            outcome="DENIED",
+            actor_id=current_user["user_id"],
+            actor_email=current_user["email"],
+            actor_role=current_user["role"],
+            ip_address=client_ip,
+            session_id=current_user["session_id"],
+            details={"reason": "Vendor does not belong to user's company"}
+        )
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
         
     conn = get_db()
     cursor = conn.cursor()
@@ -408,6 +446,10 @@ def delete_vendor(vendor_id: int, request: Request, current_user = Depends(get_c
 @app.get("/api/vendors/{vendor_id}/shap-risk")
 def get_vendor_shap_risk(vendor_id: int, session = Depends(get_current_session)):
     """Scikit-Learn RandomForest + SHAP Feature Attribution Endpoint"""
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
@@ -443,9 +485,13 @@ class VendorIncidentCreate(BaseModel):
 @app.get("/api/contagion")
 def get_risk_contagion_map(session = Depends(get_current_session)):
     """Returns network nodes and edges for the Risk Contagion View."""
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, domain, sector, risk_tier, risk_score FROM vendors")
+    cursor.execute("SELECT id, name, domain, sector, risk_tier, risk_score FROM vendors WHERE company_id = ?", (user_company_id,))
     vendors = [dict(r) for r in cursor.fetchall()]
     conn.close()
 
@@ -504,14 +550,20 @@ def get_risk_contagion_map(session = Depends(get_current_session)):
 
 @app.get("/api/feed")
 def get_activity_feed(limit: int = Query(20, ge=1, le=100), session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, vendor_id, vendor_name, source, title, summary, risk_level, url, timestamp
-        FROM risk_events
-        ORDER BY timestamp DESC
+        SELECT re.id, re.vendor_id, re.vendor_name, re.source, re.title, re.summary, re.risk_level, re.url, re.timestamp
+        FROM risk_events re
+        JOIN vendors v ON re.vendor_id = v.id
+        WHERE v.company_id = ?
+        ORDER BY re.timestamp DESC
         LIMIT ?
-    """, (limit,))
+    """, (user_company_id, limit))
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -519,6 +571,10 @@ def get_activity_feed(limit: int = Query(20, ge=1, le=100), session = Depends(ge
 @app.get("/api/quota")
 def get_quota_debug_info(session = Depends(get_current_session)):
     """Dev debug panel data for API call budgets and circuit breakers."""
+    # Restrict quota debug to admin roles only
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN"):
+        raise HTTPException(status_code=403, detail="Unauthorized: Quota debug restricted to admins")
+    
     stats = get_quota_stats()
     return {
         "demo_mode": os.getenv("DEMO_MODE", "true").lower() == "true",
@@ -543,12 +599,26 @@ def reset_quota_counters(session = Depends(get_current_user_with_mfa)):
 @app.get("/api/incidents")
 def list_incidents(vendor_id: Optional[int] = Query(None), session = Depends(get_current_session)):
     """Fetch all reported vendor security incidents."""
-    incidents = get_incidents(vendor_id)
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    
+    if vendor_id:
+        # Verify vendor belongs to user's company
+        if not verify_vendor_ownership(vendor_id, session, get_db()):
+            raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+        incidents = get_incidents(vendor_id)
+    else:
+        incidents = get_incidents(company_id=user_company_id)
     return incidents
 
 @app.get("/api/vendors/{vendor_id}/incidents")
 def get_vendor_incidents_list(vendor_id: int, session = Depends(get_current_session)):
     """Fetch incidents for a specific vendor along with score impact metrics."""
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     incidents = get_incidents(vendor_id)
     impact_stats = get_vendor_incident_score_impact(vendor_id)
     return {
@@ -560,6 +630,11 @@ def get_vendor_incidents_list(vendor_id: int, session = Depends(get_current_sess
 def log_vendor_incident(vendor_id: int, payload: VendorIncidentCreate, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     """Log incident from vendor detail panel — delegates to unified incident engine."""
     return create_new_incident(IncidentCreate(
         vendor_id=vendor_id,
@@ -574,6 +649,11 @@ def log_vendor_incident(vendor_id: int, payload: VendorIncidentCreate, session =
 def create_new_incident(payload: IncidentCreate, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(payload.vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     """Log a new security incident against a vendor and trigger risk score recalculation."""
     conn = get_db()
     cursor = conn.cursor()
@@ -628,6 +708,7 @@ def create_new_incident(payload: IncidentCreate, session = Depends(get_current_u
 def update_incident(incident_id: int, payload: IncidentStatusUpdate, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
     """Update incident resolution status (e.g. RESOLVED / INVESTIGATING) and update vendor risk score."""
     success = update_incident_status(incident_id, payload.status)
     if not success:
@@ -643,6 +724,12 @@ def update_incident(incident_id: int, payload: IncidentStatusUpdate, session = D
     row = cursor.fetchone()
     if row:
         vendor_id = row["vendor_id"]
+        
+        # Verify vendor belongs to user's company
+        if not verify_vendor_ownership(vendor_id, session, conn):
+            conn.close()
+            raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+        
         cursor.execute("SELECT id, name, domain FROM vendors WHERE id = ?", (vendor_id,))
         vendor = cursor.fetchone()
         conn.close()
@@ -668,11 +755,20 @@ def update_incident(incident_id: int, payload: IncidentStatusUpdate, session = D
 def delete_incident_endpoint(incident_id: int, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
     """Delete an incident record and recalculate vendor risk score."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT vendor_id FROM incidents WHERE id = ?", (incident_id,))
     row = cursor.fetchone()
+    
+    if row:
+        vendor_id = row["vendor_id"]
+        # Verify vendor belongs to user's company
+        if not verify_vendor_ownership(vendor_id, session, conn):
+            conn.close()
+            raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     conn.close()
 
     delete_incident(incident_id)
@@ -736,6 +832,10 @@ def list_compliance_frameworks(session = Depends(get_current_session)):
 @app.get("/api/vendors/{vendor_id}/compliance")
 def get_vendor_compliance(vendor_id: int, session = Depends(get_current_session)):
     """Get compliance frameworks for a specific vendor."""
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     frameworks = get_vendor_compliance_frameworks(vendor_id)
     return {"frameworks": frameworks}
 
@@ -743,6 +843,11 @@ def get_vendor_compliance(vendor_id: int, session = Depends(get_current_session)
 def add_vendor_compliance(vendor_id: int, payload: ComplianceFrameworkCreate, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     """Add a compliance framework assessment for a vendor."""
     framework_id = add_compliance_framework(
         vendor_id=vendor_id,
@@ -775,7 +880,11 @@ def update_compliance(framework_id: int, payload: ComplianceFrameworkUpdate, ses
 @app.get("/api/compliance/summary")
 def get_compliance_stats(session = Depends(get_current_session)):
     """Get overall compliance statistics across all vendors."""
-    summary = get_compliance_summary()
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    
+    summary = get_compliance_summary(company_id=user_company_id)
     return {"summary": summary}
 
 # Remediation Task API Endpoints (VendorAuditAI-inspired)
@@ -783,6 +892,10 @@ def get_compliance_stats(session = Depends(get_current_session)):
 @app.get("/api/vendors/{vendor_id}/remediation")
 def get_vendor_remediation(vendor_id: int, session = Depends(get_current_session)):
     """Get remediation tasks for a specific vendor."""
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     tasks = get_vendor_remediation_tasks(vendor_id)
     return {"tasks": tasks}
 
@@ -790,6 +903,11 @@ def get_vendor_remediation(vendor_id: int, session = Depends(get_current_session
 def create_remediation(vendor_id: int, payload: RemediationTaskCreate, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     """Create a remediation task for a vendor."""
     task_id = create_remediation_task(
         vendor_id=vendor_id,
@@ -819,7 +937,11 @@ def update_remediation(task_id: int, payload: RemediationTaskUpdate, session = D
 @app.get("/api/remediation/summary")
 def get_remediation_stats(session = Depends(get_current_session)):
     """Get overall remediation task statistics."""
-    summary = get_remediation_summary()
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    
+    summary = get_remediation_summary(company_id=user_company_id)
     return {"summary": summary}
 
 # 4th-Party Sub-Vendor Supply Chain Endpoints
@@ -832,12 +954,21 @@ class SubVendorCreate(BaseModel):
 @app.get("/api/vendors/{vendor_id}/sub-vendors")
 def get_vendor_sub_vendors(vendor_id: int, session = Depends(get_current_session)):
     """Retrieve 4th-party sub-vendors supplying a specific 3rd-party vendor."""
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     return get_sub_vendors(vendor_id)
 
 @app.post("/api/vendors/{vendor_id}/sub-vendors", status_code=201)
 def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate, session = Depends(get_current_user_with_mfa)):
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     """Add a 4th-party sub-vendor under a 3rd-party vendor with domain existence verification."""
     sub_domain_clean = sub.domain.lower().replace("https://", "").replace("http://", "").strip("/")
     verification = verify_vendor_existence(sub_domain_clean)
@@ -1101,10 +1232,14 @@ def create_assessment(payload: dict, request: Request, session = Depends(get_cur
     vendor_id = payload.get("vendor_id")
     if not vendor_id:
         raise HTTPException(status_code=400, detail="vendor_id required")
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
         
     db_conn = get_db()
     cursor = db_conn.cursor()
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.utcnow().isoformat()
     cursor.execute(
         "INSERT INTO assessments (vendor_id, status, created_at) VALUES (?, ?, ?)",
         (vendor_id, "DRAFT", now)
@@ -1114,11 +1249,23 @@ def create_assessment(payload: dict, request: Request, session = Depends(get_cur
     db_conn.close()
     
     from services.audit_log_service import get_audit_log
-    get_audit_log().record("ASSESSMENT_CREATED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    get_audit_log().record(
+        action="ASSESSMENT_CREATED",
+        resource=f"assessment:{assessment_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=request.client.host if request.client else "127.0.0.1",
+        session_id=session["session_id"]
+    )
     return {"status": "success", "assessment_id": assessment_id}
 
 @app.get("/api/assessments/{assessment_id}")
 def get_assessment(assessment_id: int, request: Request, session = Depends(get_current_session)):
+    # Verify assessment belongs to user's company
+    if not verify_assessment_ownership(assessment_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Assessment does not belong to your company")
+    
     db_conn = get_db()
     cursor = db_conn.cursor()
     cursor.execute("SELECT * FROM assessments WHERE id = ?", (assessment_id,))
@@ -1132,11 +1279,23 @@ def get_assessment(assessment_id: int, request: Request, session = Depends(get_c
     db_conn.close()
     
     from services.audit_log_service import get_audit_log
-    get_audit_log().record("ASSESSMENT_VIEWED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    get_audit_log().record(
+        action="ASSESSMENT_VIEWED",
+        resource=f"assessment:{assessment_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=request.client.host if request.client else "127.0.0.1",
+        session_id=session["session_id"]
+    )
     return {"assessment": dict(assessment), "answers": [dict(a) for a in answers]}
 
 @app.put("/api/assessments/{assessment_id}/answers")
 def save_assessment_answers(assessment_id: int, payload: AnswersUpdate, request: Request, session = Depends(get_current_session)):
+    # Verify assessment belongs to user's company
+    if not verify_assessment_ownership(assessment_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Assessment does not belong to your company")
+    
     db_conn = get_db()
     cursor = db_conn.cursor()
     
@@ -1160,11 +1319,23 @@ def save_assessment_answers(assessment_id: int, payload: AnswersUpdate, request:
     db_conn.close()
     
     from services.audit_log_service import get_audit_log
-    get_audit_log().record("ASSESSMENT_DRAFT_SAVED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    get_audit_log().record(
+        action="ASSESSMENT_DRAFT_SAVED",
+        resource=f"assessment:{assessment_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=request.client.host if request.client else "127.0.0.1",
+        session_id=session["session_id"]
+    )
     return {"status": "success", "message": "Answers saved"}
 
 @app.post("/api/assessments/{assessment_id}/submit")
 def submit_assessment(assessment_id: int, request: Request, session = Depends(get_current_session)):
+    # Verify assessment belongs to user's company
+    if not verify_assessment_ownership(assessment_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Assessment does not belong to your company")
+    
     db_conn = get_db()
     cursor = db_conn.cursor()
     cursor.execute("SELECT status FROM assessments WHERE id = ?", (assessment_id,))
@@ -1176,13 +1347,21 @@ def submit_assessment(assessment_id: int, request: Request, session = Depends(ge
         db_conn.close()
         raise HTTPException(status_code=400, detail="Already submitted")
         
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.utcnow().isoformat()
     cursor.execute("UPDATE assessments SET status = 'SUBMITTED', submitted_at = ? WHERE id = ?", (now, assessment_id))
     db_conn.commit()
     db_conn.close()
     
     from services.audit_log_service import get_audit_log
-    get_audit_log().record("ASSESSMENT_SUBMITTED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    get_audit_log().record(
+        action="ASSESSMENT_SUBMITTED",
+        resource=f"assessment:{assessment_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=request.client.host if request.client else "127.0.0.1",
+        session_id=session["session_id"]
+    )
     
     return {"status": "success"}
 
@@ -1192,6 +1371,10 @@ from services.risk_scoring_service import calculate_assessment_score
 @app.post("/api/assessments/{assessment_id}/calculate-score")
 def calculate_score_endpoint(assessment_id: int, request: Request, session = Depends(get_current_user_with_mfa)):
     from services.audit_log_service import get_audit_log, AuditAction
+    
+    # Verify assessment belongs to user's company
+    if not verify_assessment_ownership(assessment_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Assessment does not belong to your company")
     
     # Needs auth, enforce RBAC (vendor users can only access their own)
     # Auditors are read-only (so they can't calculate score)
@@ -1236,6 +1419,10 @@ def calculate_score_endpoint(assessment_id: int, request: Request, session = Dep
 @app.get("/api/vendors/{vendor_id}/risk-score")
 def get_vendor_risk_score(vendor_id: int, request: Request, session = Depends(get_current_session)):
     from services.audit_log_service import get_audit_log, AuditAction
+    
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
     
     if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
         raise HTTPException(status_code=403, detail="Unauthorized: You can only access your own vendor's risk score")
@@ -1284,6 +1471,10 @@ def get_vendor_risk_score(vendor_id: int, request: Request, session = Depends(ge
 
 @app.get("/api/vendors/{vendor_id}/risk-history")
 def get_vendor_risk_history(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    # Verify vendor belongs to user's company
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
+    
     if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
         raise HTTPException(status_code=403, detail="Unauthorized: You can only access your own vendor's risk score history")
         

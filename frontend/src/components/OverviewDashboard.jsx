@@ -218,7 +218,7 @@ export default function OverviewDashboard({
               {filteredVendors.length === 0 ? (
                 <tr>
                   <td colSpan="6" className="py-12 text-center text-slate-400">
-                    No vendors match the active filter criteria.
+                    No vendors registered yet. Add your first vendor to start monitoring vendor risk.
                   </td>
                 </tr>
               ) : (

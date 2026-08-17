@@ -47,30 +47,46 @@ def verify_google_token(token: str) -> dict:
     client_id = load_secret("GOOGLE_CLIENT_ID", required=False)
 
     # 1. Mock token support for testing/CI (bypasses network call to Google JWKS)
-    if token.startswith("mock_oidc_"):
-        parts = token.split("_")
-        if len(parts) >= 8:
-            sub = parts[2]
-            email = parts[3]
-            name = parts[4]
-            iss = parts[5]
-            aud = parts[6]
-            exp = float(parts[7])
+    if token.startswith("mock_oidc"):
+        # Support both underscore and pipe delimiter formats
+        if "|" in token:
+            # Pipe delimiter format: mock_oidc|sub|email|name|iss|aud|exp
+            parts = token.split("|")
+            if len(parts) >= 7:
+                sub = parts[1]
+                email = parts[2]
+                name = parts[3]
+                iss = parts[4]
+                aud = parts[5]
+                exp = float(parts[6])
+            else:
+                raise ValueError("Invalid mock token format (pipe)")
+        else:
+            # Underscore delimiter format: mock_oidc_{sub}_{email}_{name}_{iss}_{aud}_{exp}
+            parts = token.split("_")
+            if len(parts) >= 8:
+                sub = parts[2]
+                email = parts[3]
+                name = parts[4]
+                iss = parts[5]
+                aud = parts[6]
+                exp = float(parts[7])
+            else:
+                raise ValueError("Invalid mock token format (underscore)")
 
-            if iss not in ("accounts.google.com", "https://accounts.google.com"):
-                raise ValueError("OIDC verification failed: Wrong issuer")
-            if client_id and aud != client_id:
-                raise ValueError("OIDC verification failed: Wrong audience")
-            if time.time() > exp:
-                raise ValueError("OIDC verification failed: Token expired")
+        if iss not in ("accounts.google.com", "https://accounts.google.com"):
+            raise ValueError("OIDC verification failed: Wrong issuer")
+        if client_id and aud != client_id:
+            raise ValueError("OIDC verification failed: Wrong audience")
+        if time.time() > exp:
+            raise ValueError("OIDC verification failed: Token expired")
 
-            return {
-                "sub": sub,
-                "email": email,
-                "name": name,
-                "email_verified": True
-            }
-        raise ValueError("Invalid mock token format")
+        return {
+            "sub": sub,
+            "email": email,
+            "name": name,
+            "email_verified": True
+        }
 
     if not client_id:
         raise ValueError("GOOGLE_CLIENT_ID is not configured in secrets.")
@@ -200,7 +216,7 @@ def get_session(session_id: str, db_conn) -> dict | None:
     cursor = db_conn.cursor()
     cursor.execute(
         """
-        SELECT s.*, u.email, u.name, u.role, u.mfa_enabled, u.totp_secret_enc, u.totp_secret_aad
+        SELECT s.*, u.email, u.name, u.role, u.company_id, u.mfa_enabled, u.totp_secret_enc, u.totp_secret_aad
         FROM sessions s
         JOIN users u ON s.user_id = u.id
         WHERE s.session_id = ?
@@ -278,3 +294,50 @@ async def get_current_user_with_mfa(request: Request, session = Depends(get_curr
         raise HTTPException(status_code=403, detail="MFA verification required for this operation.")
         
     return session
+
+
+def verify_vendor_ownership(vendor_id: int, session: dict, db_conn) -> bool:
+    """
+    Server-side verification that a vendor belongs to the authenticated user's company.
+    Returns True if authorized, False otherwise.
+    """
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        logger.error(f"User {session['user_id']} has no company_id in session")
+        return False
+    
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT company_id FROM vendors WHERE id = ?", (vendor_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        return False
+    
+    vendor_company_id = row["company_id"]
+    return vendor_company_id == user_company_id
+
+
+def verify_assessment_ownership(assessment_id: int, session: dict, db_conn) -> bool:
+    """
+    Server-side verification that an assessment belongs to the authenticated user's company.
+    Returns True if authorized, False otherwise.
+    """
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        logger.error(f"User {session['user_id']} has no company_id in session")
+        return False
+    
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        SELECT v.company_id 
+        FROM assessments a
+        JOIN vendors v ON a.vendor_id = v.id
+        WHERE a.id = ?
+    """, (assessment_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        return False
+    
+    vendor_company_id = row["company_id"]
+    return vendor_company_id == user_company_id

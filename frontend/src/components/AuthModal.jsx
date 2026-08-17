@@ -26,7 +26,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
     if (isOpen && window.google) {
       try {
         window.google.accounts.id.initialize({
-          client_id: "your-client-id.apps.googleusercontent.com",
+          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || "your-client-id.apps.googleusercontent.com",
           callback: (response) => {
             if (response.credential) {
               handleLoginWithToken(response.credential);

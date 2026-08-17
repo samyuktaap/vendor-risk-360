@@ -39,57 +39,8 @@ export default function DocumentManager({ vendors }) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  // Mock documents data (in real app, this would come from API)
-  const mockDocuments = [
-    {
-      id: 1,
-      vendor_id: 1,
-      vendor_name: 'Okta Inc.',
-      document_type: 'SOC 2 Report',
-      title: 'SOC 2 Type II Report 2024',
-      file_name: 'okta_soc2_2024.pdf',
-      file_size: '2.4 MB',
-      uploaded_at: '2024-07-15T10:30:00',
-      status: 'ANALYZED',
-      description: 'Annual SOC 2 Type II audit report',
-      compliance_score: 85,
-      gaps_identified: 3,
-      controls_passed: 142,
-      controls_total: 145
-    },
-    {
-      id: 2,
-      vendor_id: 2,
-      vendor_name: 'CrowdStrike Falcon',
-      document_type: 'ISO 27001 Certificate',
-      title: 'ISO 27001:2013 Certificate',
-      file_name: 'crowdstrike_iso27001.pdf',
-      file_size: '1.2 MB',
-      uploaded_at: '2024-06-20T14:45:00',
-      status: 'APPROVED',
-      description: 'ISO 27001 certification documentation',
-      compliance_score: 92,
-      gaps_identified: 1,
-      controls_passed: 138,
-      controls_total: 140
-    },
-    {
-      id: 3,
-      vendor_id: 3,
-      vendor_name: 'Snowflake Data Cloud',
-      document_type: 'Security Questionnaire',
-      title: 'SIG Questionnaire Response',
-      file_name: 'snowflake_sig_response.xlsx',
-      file_size: '856 KB',
-      uploaded_at: '2024-08-01T09:15:00',
-      status: 'PROCESSING',
-      description: 'Standardized Information Gathering questionnaire',
-      compliance_score: null,
-      gaps_identified: null,
-      controls_passed: null,
-      controls_total: null
-    }
-  ];
+  // API not yet implemented, return empty state.
+  const mockDocuments = [];
 
   useEffect(() => {
     setDocuments(mockDocuments);
