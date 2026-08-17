@@ -32,8 +32,9 @@ import {
 } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import RiskScoreRing from './RiskScoreRing';
+import RiskQuestionnaire from './RiskQuestionnaire';
 
-export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }) {
+export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, currentUser }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -45,14 +46,38 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const [loggingIncident, setLoggingIncident] = useState(false);
   const [resolvingId, setResolvingId] = useState(null);
   const [shapData, setShapData] = useState(null);
+  const [deterministicScore, setDeterministicScore] = useState(null);
+  const [riskHistory, setRiskHistory] = useState([]);
 
   useEffect(() => {
     if (vendorId) {
       fetchVendorDetail();
       fetchIncidents();
       fetchShapData();
+      fetchDeterministicScore();
+      fetchRiskHistory();
     }
   }, [vendorId]);
+
+  const fetchDeterministicScore = async () => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/risk-score`);
+      if (res.ok) {
+        setDeterministicScore(await res.json());
+      }
+    } catch (err) { console.error("Failed to fetch deterministic risk score", err); }
+  };
+
+  const fetchRiskHistory = async () => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/vendors/${vendorId}/risk-history`);
+      if (res.ok) {
+        const json = await res.json();
+        setRiskHistory(json.history || []);
+      }
+    } catch (err) { console.error("Failed to fetch risk history", err); }
+  };
+
 
   const fetchShapData = async () => {
     try {
@@ -177,8 +202,20 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
   const breakdown = assessment?.breakdown;
   const aiSummary = assessment?.ai_summary;
   const predictions = aiSummary?.predictions_90d;
-  const score = assessment?.overall_score ?? vendor?.risk_score ?? 0;
-  const history30d = assessment?.history_30d || [];
+  
+  // Deterministic risk score takes precedence if it exists
+  const score = deterministicScore?.total_score ?? assessment?.overall_score ?? vendor?.risk_score ?? 0;
+  const riskTier = deterministicScore?.risk_level ?? assessment?.risk_tier ?? vendor?.risk_tier;
+  
+  // Format risk history for the chart
+  let historyData = assessment?.history_30d || [];
+  if (riskHistory && riskHistory.length > 0) {
+    historyData = riskHistory.map(h => ({
+      date: new Date(h.calculated_at).toLocaleDateString(),
+      score: h.total_score,
+      tier: h.risk_level
+    }));
+  }
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex justify-end transition-opacity duration-300">
@@ -276,32 +313,43 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                   Security Risk Classification
                 </div>
                 <div className="text-2xl font-black text-slate-100 flex items-center gap-2">
-                  <span>{assessment?.risk_tier || vendor?.risk_tier} RISK</span>
+                  <span>{riskTier} RISK</span>
                   <span className={`text-xs px-2.5 py-0.5 rounded-full border ${
-                    score >= 70
+                    score >= 60
                       ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                      : score >= 40
+                      : score >= 30
                       ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                       : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   }`}>
-                    {score >= 70 ? 'High Contagion Hazard' : score >= 40 ? 'Moderate Concern' : 'Clean Record'}
+                    {score >= 60 ? 'High Risk' : score >= 30 ? 'Medium Risk' : 'Low Risk'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 font-mono">
-                  {assessment?.formula_description}
+                  {deterministicScore ? `Deterministic Assessment Score (${deterministicScore.scoring_version})` : assessment?.formula_description}
                 </p>
               </div>
 
-              <RiskScoreRing
-                score={score}
-                size={110}
-                strokeWidth={10}
-                showFormulaTooltip={true}
-                breakdown={breakdown}
-              />
+              {deterministicScore ? (
+                <div className="flex flex-col gap-1 text-xs">
+                    <div className="flex justify-between w-48"><span className="text-slate-400">Cybersecurity:</span> <span className="font-bold">{deterministicScore.categories.cybersecurity}</span></div>
+                    <div className="flex justify-between w-48"><span className="text-slate-400">Compliance:</span> <span className="font-bold">{deterministicScore.categories.compliance}</span></div>
+                    <div className="flex justify-between w-48"><span className="text-slate-400">Financial Stability:</span> <span className="font-bold">{deterministicScore.categories.financial_stability}</span></div>
+                    <div className="flex justify-between w-48"><span className="text-slate-400">Operational Risk:</span> <span className="font-bold">{deterministicScore.categories.operational_risk}</span></div>
+                    <div className="flex justify-between w-48"><span className="text-slate-400">Data Privacy:</span> <span className="font-bold">{deterministicScore.categories.data_privacy}</span></div>
+                    <div className="flex justify-between w-48 mt-1 pt-1 border-t border-slate-700 text-cyan-400"><span className="font-bold">Total Score:</span> <span className="font-bold">{score.toFixed(1)} / 100</span></div>
+                </div>
+              ) : (
+                <RiskScoreRing
+                  score={score}
+                  size={110}
+                  strokeWidth={10}
+                  showFormulaTooltip={true}
+                  breakdown={breakdown}
+                />
+              )}
             </div>
 
-            {/* 30-Day Risk Score Trend Chart */}
+            {/* Risk Score Trend Chart */}
             <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-slate-200">
                 <span className="flex items-center gap-1.5 text-cyan-400">
@@ -313,7 +361,7 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
 
               <div className="h-32 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={history30d} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
+                  <LineChart data={historyData} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                     <XAxis dataKey="date" stroke="#64748b" fontSize={9} />
                     <YAxis domain={[0, 100]} stroke="#64748b" fontSize={9} />
@@ -324,7 +372,7 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                     <Line
                       type="monotone"
                       dataKey="score"
-                      stroke={score >= 70 ? "#f43f5e" : score >= 40 ? "#f59e0b" : "#10b981"}
+                      stroke={score >= 60 ? "#f43f5e" : score >= 30 ? "#f59e0b" : "#10b981"}
                       strokeWidth={2.5}
                       dot={false}
                       activeDot={{ r: 5 }}
@@ -531,6 +579,17 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
             {/* Detail Tabs */}
             <div className="border-b border-slate-800 flex flex-wrap gap-4 text-xs font-semibold">
               <button
+                onClick={() => setActiveTab('assessment')}
+                className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
+                  activeTab === 'assessment'
+                    ? 'border-cyan-400 text-cyan-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                Risk Assessment
+              </button>
+              <button
                 onClick={() => setActiveTab('actions')}
                 className={`pb-2 transition-colors border-b-2 ${
                   activeTab === 'actions'
@@ -655,6 +714,15 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor }
                 )}
               </button>
             </div>
+
+            {/* TAB CONTENT: QUESTIONNAIRE */}
+            {activeTab === 'assessment' && (
+              <RiskQuestionnaire 
+                vendorId={vendorId} 
+                userRole={currentUser?.role} 
+                onScoreUpdated={fetchDeterministicScore} 
+              />
+            )}
 
             {/* TAB CONTENT: AI BRIEFING */}
             {activeTab === 'ai' && (

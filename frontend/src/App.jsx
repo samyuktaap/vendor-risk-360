@@ -31,38 +31,43 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   // Active User Authentication State
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('vendor_risk_user');
-      return saved ? JSON.parse(saved) : {
-        role: 'enterprise',
-        name: 'Sarah Jenkins',
-        title: 'Chief Information Security Officer (CISO)',
-        organization: 'Acme Enterprise',
-        email: 'ciso@acme-corp.com',
-        avatar: 'SJ'
-      };
-    } catch (e) {
-      return null;
-    }
-  });
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
 
   useEffect(() => {
-    fetchAllData();
+    checkAuth();
   }, []);
+
+  const checkAuth = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/me`);
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentUser(data.user);
+        fetchAllData();
+      } else {
+        setCurrentUser(null);
+        setIsAuthModalOpen(true);
+      }
+    } catch (err) {
+      console.error("Error checking auth status:", err);
+      setCurrentUser(null);
+      setIsAuthModalOpen(true);
+    } finally {
+      setAuthChecking(false);
+    }
+  };
 
   const handleLogin = (user) => {
     setCurrentUser(user);
-    try {
-      localStorage.setItem('vendor_risk_user', JSON.stringify(user));
-    } catch (e) {}
+    fetchAllData();
   };
 
-  const handleSignOut = () => {
-    setCurrentUser(null);
+  const handleSignOut = async () => {
     try {
-      localStorage.removeItem('vendor_risk_user');
+      await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST' });
     } catch (e) {}
+    setCurrentUser(null);
     setIsAuthModalOpen(true);
   };
 
@@ -100,6 +105,14 @@ export default function App() {
       console.error(err);
     }
   };
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-[#0b0f17] flex items-center justify-center text-slate-400 text-sm">
+        Connecting to Security Risk Engine...
+      </div>
+    );
+  }
 
   // Dedicated View for Vendor Self-Service Login
   if (currentUser && currentUser.role === 'vendor') {
@@ -231,6 +244,7 @@ export default function App() {
           vendorId={selectedVendorId}
           onClose={() => setSelectedVendorId(null)}
           onRefreshVendor={fetchAllData}
+          currentUser={currentUser}
         />
       )}
 

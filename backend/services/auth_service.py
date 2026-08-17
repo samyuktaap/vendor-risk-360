@@ -97,13 +97,21 @@ def verify_google_token(token: str) -> dict:
 def get_or_create_user(google_sub: str, email: str, name: str, db_conn) -> dict:
     """
     Links Google sub ID to local user record, creates one if new.
+    
+    Mocks a DB lookup. If the user doesn't exist, provisions them based on their OIDC identity.
     RBAC assignment is done independently on the server side.
     """
     cursor = db_conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE google_sub = ?", (google_sub,))
+    cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
     user = cursor.fetchone()
     
     if user:
+        if user['google_sub'] != google_sub:
+            cursor.execute("UPDATE users SET google_sub = ? WHERE id = ?", (google_sub, user['id']))
+            db_conn.commit()
+            user = dict(user)
+            user['google_sub'] = google_sub
+            return user
         return dict(user)
 
     # Determine role independently. Default is ANALYST.

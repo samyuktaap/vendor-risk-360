@@ -748,6 +748,15 @@ class TestVaultRealIntegration(unittest.TestCase):
         # Verify if VAULT_ADDR is set in environment (provided by vault_test_creds.env)
         if not os.environ.get("VAULT_ADDR"):
             self.skipTest("Real HashiCorp Vault integration tests skipped: VAULT_ADDR not configured.")
+        import socket, urllib.parse
+        parsed = urllib.parse.urlparse(os.environ.get("VAULT_ADDR"))
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 8200
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                pass
+        except OSError:
+            self.skipTest("Real HashiCorp Vault integration tests skipped: Vault server is not reachable.")
 
     def tearDown(self):
         _reset_singletons()

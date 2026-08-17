@@ -27,7 +27,7 @@ app = FastAPI(title="VendorRisk 360 API", version="1.0.0")
 # Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -113,7 +113,7 @@ def health_check():
     }
 
 @app.get("/api/vendors")
-def get_vendors():
+def get_vendors(session = Depends(get_current_session)):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
@@ -143,7 +143,9 @@ def get_vendors():
     return [dict(r) for r in rows]
 
 @app.post("/api/vendors", status_code=201)
-def add_vendor(vendor: VendorCreate):
+def add_vendor(vendor: VendorCreate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     conn = get_db()
     cursor = conn.cursor()
 
@@ -251,7 +253,7 @@ def add_vendor(vendor: VendorCreate):
     }
 
 @app.get("/api/vendors/{vendor_id}")
-def get_vendor_detail(vendor_id: int):
+def get_vendor_detail(vendor_id: int, session = Depends(get_current_session)):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM vendors WHERE id = ?", (vendor_id,))
@@ -279,7 +281,9 @@ def get_vendor_detail(vendor_id: int):
     }
 
 @app.post("/api/vendors/{vendor_id}/refresh")
-def refresh_vendor_risk(vendor_id: int):
+def refresh_vendor_risk(vendor_id: int, session = Depends(get_current_session)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Manual trigger to re-check API risk scores for a single vendor."""
     conn = get_db()
     cursor = conn.cursor()
@@ -402,7 +406,7 @@ def delete_vendor(vendor_id: int, request: Request, current_user = Depends(get_c
     return {"message": "Vendor deleted successfully."}
 
 @app.get("/api/vendors/{vendor_id}/shap-risk")
-def get_vendor_shap_risk(vendor_id: int):
+def get_vendor_shap_risk(vendor_id: int, session = Depends(get_current_session)):
     """Scikit-Learn RandomForest + SHAP Feature Attribution Endpoint"""
     conn = get_db()
     cursor = conn.cursor()
@@ -437,7 +441,7 @@ class VendorIncidentCreate(BaseModel):
     status: str = Field(default="OPEN", example="OPEN")
 
 @app.get("/api/contagion")
-def get_risk_contagion_map():
+def get_risk_contagion_map(session = Depends(get_current_session)):
     """Returns network nodes and edges for the Risk Contagion View."""
     conn = get_db()
     cursor = conn.cursor()
@@ -499,7 +503,7 @@ def get_risk_contagion_map():
     }
 
 @app.get("/api/feed")
-def get_activity_feed(limit: int = Query(20, ge=1, le=100)):
+def get_activity_feed(limit: int = Query(20, ge=1, le=100), session = Depends(get_current_session)):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
@@ -513,7 +517,7 @@ def get_activity_feed(limit: int = Query(20, ge=1, le=100)):
     return [dict(r) for r in rows]
 
 @app.get("/api/quota")
-def get_quota_debug_info():
+def get_quota_debug_info(session = Depends(get_current_session)):
     """Dev debug panel data for API call budgets and circuit breakers."""
     stats = get_quota_stats()
     return {
@@ -523,7 +527,9 @@ def get_quota_debug_info():
     }
 
 @app.post("/api/quota/reset")
-def reset_quota_counters():
+def reset_quota_counters(session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("ENTERPRISE_ADMIN", "CISO"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM api_quota")
@@ -535,13 +541,13 @@ def reset_quota_counters():
 # Security Incident Management API Endpoints
 
 @app.get("/api/incidents")
-def list_incidents(vendor_id: Optional[int] = Query(None)):
+def list_incidents(vendor_id: Optional[int] = Query(None), session = Depends(get_current_session)):
     """Fetch all reported vendor security incidents."""
     incidents = get_incidents(vendor_id)
     return incidents
 
 @app.get("/api/vendors/{vendor_id}/incidents")
-def get_vendor_incidents_list(vendor_id: int):
+def get_vendor_incidents_list(vendor_id: int, session = Depends(get_current_session)):
     """Fetch incidents for a specific vendor along with score impact metrics."""
     incidents = get_incidents(vendor_id)
     impact_stats = get_vendor_incident_score_impact(vendor_id)
@@ -551,7 +557,9 @@ def get_vendor_incidents_list(vendor_id: int):
     }
 
 @app.post("/api/vendors/{vendor_id}/incidents", status_code=201)
-def log_vendor_incident(vendor_id: int, payload: VendorIncidentCreate):
+def log_vendor_incident(vendor_id: int, payload: VendorIncidentCreate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Log incident from vendor detail panel — delegates to unified incident engine."""
     return create_new_incident(IncidentCreate(
         vendor_id=vendor_id,
@@ -563,7 +571,9 @@ def log_vendor_incident(vendor_id: int, payload: VendorIncidentCreate):
     ))
 
 @app.post("/api/incidents")
-def create_new_incident(payload: IncidentCreate):
+def create_new_incident(payload: IncidentCreate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Log a new security incident against a vendor and trigger risk score recalculation."""
     conn = get_db()
     cursor = conn.cursor()
@@ -615,7 +625,9 @@ def create_new_incident(payload: IncidentCreate):
     }
 
 @app.patch("/api/incidents/{incident_id}")
-def update_incident(incident_id: int, payload: IncidentStatusUpdate):
+def update_incident(incident_id: int, payload: IncidentStatusUpdate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Update incident resolution status (e.g. RESOLVED / INVESTIGATING) and update vendor risk score."""
     success = update_incident_status(incident_id, payload.status)
     if not success:
@@ -653,7 +665,9 @@ def update_incident(incident_id: int, payload: IncidentStatusUpdate):
     }
 
 @app.delete("/api/incidents/{incident_id}")
-def delete_incident_endpoint(incident_id: int):
+def delete_incident_endpoint(incident_id: int, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Delete an incident record and recalculate vendor risk score."""
     conn = get_db()
     cursor = conn.cursor()
@@ -683,7 +697,7 @@ def delete_incident_endpoint(incident_id: int):
     return {"message": f"Incident #{incident_id} deleted."}
 
 @app.post("/api/incidents/recalculate-aging")
-def recalculate_incident_aging():
+def recalculate_incident_aging(session = Depends(get_current_session)):
     """Recalculate all open incident impacts to apply aging logic (reduces impact for older incidents)."""
     updated_count = recalculate_all_incident_impacts()
     
@@ -715,18 +729,20 @@ def recalculate_incident_aging():
 # Compliance Framework API Endpoints (VendorAuditAI-inspired)
 
 @app.get("/api/compliance/frameworks")
-def list_compliance_frameworks():
+def list_compliance_frameworks(session = Depends(get_current_session)):
     """Get list of available compliance frameworks."""
     return {"frameworks": COMPLIANCE_FRAMEWORKS}
 
 @app.get("/api/vendors/{vendor_id}/compliance")
-def get_vendor_compliance(vendor_id: int):
+def get_vendor_compliance(vendor_id: int, session = Depends(get_current_session)):
     """Get compliance frameworks for a specific vendor."""
     frameworks = get_vendor_compliance_frameworks(vendor_id)
     return {"frameworks": frameworks}
 
 @app.post("/api/vendors/{vendor_id}/compliance", status_code=201)
-def add_vendor_compliance(vendor_id: int, payload: ComplianceFrameworkCreate):
+def add_vendor_compliance(vendor_id: int, payload: ComplianceFrameworkCreate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Add a compliance framework assessment for a vendor."""
     framework_id = add_compliance_framework(
         vendor_id=vendor_id,
@@ -741,7 +757,9 @@ def add_vendor_compliance(vendor_id: int, payload: ComplianceFrameworkCreate):
     }
 
 @app.patch("/api/compliance/{framework_id}")
-def update_compliance(framework_id: int, payload: ComplianceFrameworkUpdate):
+def update_compliance(framework_id: int, payload: ComplianceFrameworkUpdate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Update compliance framework assessment results."""
     success = update_compliance_framework(
         framework_id=framework_id,
@@ -755,7 +773,7 @@ def update_compliance(framework_id: int, payload: ComplianceFrameworkUpdate):
     return {"message": "Compliance framework updated successfully."}
 
 @app.get("/api/compliance/summary")
-def get_compliance_stats():
+def get_compliance_stats(session = Depends(get_current_session)):
     """Get overall compliance statistics across all vendors."""
     summary = get_compliance_summary()
     return {"summary": summary}
@@ -763,13 +781,15 @@ def get_compliance_stats():
 # Remediation Task API Endpoints (VendorAuditAI-inspired)
 
 @app.get("/api/vendors/{vendor_id}/remediation")
-def get_vendor_remediation(vendor_id: int):
+def get_vendor_remediation(vendor_id: int, session = Depends(get_current_session)):
     """Get remediation tasks for a specific vendor."""
     tasks = get_vendor_remediation_tasks(vendor_id)
     return {"tasks": tasks}
 
 @app.post("/api/vendors/{vendor_id}/remediation", status_code=201)
-def create_remediation(vendor_id: int, payload: RemediationTaskCreate):
+def create_remediation(vendor_id: int, payload: RemediationTaskCreate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Create a remediation task for a vendor."""
     task_id = create_remediation_task(
         vendor_id=vendor_id,
@@ -787,7 +807,9 @@ def create_remediation(vendor_id: int, payload: RemediationTaskCreate):
     }
 
 @app.patch("/api/remediation/{task_id}")
-def update_remediation(task_id: int, payload: RemediationTaskUpdate):
+def update_remediation(task_id: int, payload: RemediationTaskUpdate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST", "VENDOR"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Update remediation task status."""
     success = update_remediation_task(task_id=task_id, status=payload.status)
     if not success:
@@ -795,7 +817,7 @@ def update_remediation(task_id: int, payload: RemediationTaskUpdate):
     return {"message": f"Remediation task status updated to {payload.status}."}
 
 @app.get("/api/remediation/summary")
-def get_remediation_stats():
+def get_remediation_stats(session = Depends(get_current_session)):
     """Get overall remediation task statistics."""
     summary = get_remediation_summary()
     return {"summary": summary}
@@ -808,12 +830,14 @@ class SubVendorCreate(BaseModel):
     risk_score: Optional[int] = Field(default=25, example=15)
 
 @app.get("/api/vendors/{vendor_id}/sub-vendors")
-def get_vendor_sub_vendors(vendor_id: int):
+def get_vendor_sub_vendors(vendor_id: int, session = Depends(get_current_session)):
     """Retrieve 4th-party sub-vendors supplying a specific 3rd-party vendor."""
     return get_sub_vendors(vendor_id)
 
 @app.post("/api/vendors/{vendor_id}/sub-vendors", status_code=201)
-def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate):
+def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Add a 4th-party sub-vendor under a 3rd-party vendor with domain existence verification."""
     sub_domain_clean = sub.domain.lower().replace("https://", "").replace("http://", "").strip("/")
     verification = verify_vendor_existence(sub_domain_clean)
@@ -827,7 +851,9 @@ def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate):
     return {"id": sub_id, "message": f"Added 4th-party sub-vendor {sub.name} for vendor ID {vendor_id}"}
 
 @app.delete("/api/sub-vendors/{sub_id}")
-def remove_sub_vendor(sub_id: int):
+def remove_sub_vendor(sub_id: int, session = Depends(get_current_user_with_mfa)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Remove a 4th-party sub-vendor from the supply chain graph."""
     delete_sub_vendor(sub_id)
     return {"message": "Sub-vendor removed successfully."}
@@ -835,6 +861,20 @@ def remove_sub_vendor(sub_id: int):
 # Google OIDC & MFA Endpoints
 class GoogleLoginRequest(BaseModel):
     id_token: str
+
+@app.get("/api/auth/me")
+def get_me_endpoint(session = Depends(get_current_session)):
+    return {
+        "status": "success",
+        "user": {
+            "id": session["user_id"],
+            "email": session["email"],
+            "name": session["name"],
+            "role": session["role"],
+            "mfa_enabled": bool(session["mfa_enabled"]),
+            "mfa_verified": bool(session["mfa_verified"])
+        }
+    }
 
 @app.post("/api/auth/google-login")
 def google_login_endpoint(payload: GoogleLoginRequest, request: Request, response: Response):
@@ -1042,6 +1082,224 @@ def verify_mfa_endpoint(payload: MfaVerifyRequest, request: Request, session = D
         raise HTTPException(status_code=429, detail=str(e))
     finally:
         db_conn.close()
+
+# --- Vendor Risk Questionnaire APIs ---
+
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+
+class AnswerPayload(BaseModel):
+    question_id: str
+    category: str
+    answer_value: str
+
+class AnswersUpdate(BaseModel):
+    answers: List[AnswerPayload]
+
+@app.post("/api/assessments")
+def create_assessment(payload: dict, request: Request, session = Depends(get_current_session)):
+    vendor_id = payload.get("vendor_id")
+    if not vendor_id:
+        raise HTTPException(status_code=400, detail="vendor_id required")
+        
+    db_conn = get_db()
+    cursor = db_conn.cursor()
+    now = datetime.datetime.utcnow().isoformat()
+    cursor.execute(
+        "INSERT INTO assessments (vendor_id, status, created_at) VALUES (?, ?, ?)",
+        (vendor_id, "DRAFT", now)
+    )
+    assessment_id = cursor.lastrowid
+    db_conn.commit()
+    db_conn.close()
+    
+    from services.audit_log_service import get_audit_log
+    get_audit_log().record("ASSESSMENT_CREATED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    return {"status": "success", "assessment_id": assessment_id}
+
+@app.get("/api/assessments/{assessment_id}")
+def get_assessment(assessment_id: int, request: Request, session = Depends(get_current_session)):
+    db_conn = get_db()
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT * FROM assessments WHERE id = ?", (assessment_id,))
+    assessment = cursor.fetchone()
+    if not assessment:
+        db_conn.close()
+        raise HTTPException(status_code=404, detail="Assessment not found")
+        
+    cursor.execute("SELECT question_id, category, answer_value FROM assessment_answers WHERE assessment_id = ?", (assessment_id,))
+    answers = cursor.fetchall()
+    db_conn.close()
+    
+    from services.audit_log_service import get_audit_log
+    get_audit_log().record("ASSESSMENT_VIEWED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    return {"assessment": dict(assessment), "answers": [dict(a) for a in answers]}
+
+@app.put("/api/assessments/{assessment_id}/answers")
+def save_assessment_answers(assessment_id: int, payload: AnswersUpdate, request: Request, session = Depends(get_current_session)):
+    db_conn = get_db()
+    cursor = db_conn.cursor()
+    
+    cursor.execute("SELECT status FROM assessments WHERE id = ?", (assessment_id,))
+    row = cursor.fetchone()
+    if not row:
+        db_conn.close()
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if row["status"] != "DRAFT":
+        db_conn.close()
+        raise HTTPException(status_code=400, detail="Cannot edit a submitted assessment")
+        
+    # Overwrite answers
+    cursor.execute("DELETE FROM assessment_answers WHERE assessment_id = ?", (assessment_id,))
+    for ans in payload.answers:
+        cursor.execute(
+            "INSERT INTO assessment_answers (assessment_id, question_id, category, answer_value) VALUES (?, ?, ?, ?)",
+            (assessment_id, ans.question_id, ans.category, ans.answer_value)
+        )
+    db_conn.commit()
+    db_conn.close()
+    
+    from services.audit_log_service import get_audit_log
+    get_audit_log().record("ASSESSMENT_DRAFT_SAVED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    return {"status": "success", "message": "Answers saved"}
+
+@app.post("/api/assessments/{assessment_id}/submit")
+def submit_assessment(assessment_id: int, request: Request, session = Depends(get_current_session)):
+    db_conn = get_db()
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT status FROM assessments WHERE id = ?", (assessment_id,))
+    row = cursor.fetchone()
+    if not row:
+        db_conn.close()
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if row["status"] == "SUBMITTED":
+        db_conn.close()
+        raise HTTPException(status_code=400, detail="Already submitted")
+        
+    now = datetime.datetime.utcnow().isoformat()
+    cursor.execute("UPDATE assessments SET status = 'SUBMITTED', submitted_at = ? WHERE id = ?", (now, assessment_id))
+    db_conn.commit()
+    db_conn.close()
+    
+    from services.audit_log_service import get_audit_log
+    get_audit_log().record("ASSESSMENT_SUBMITTED", f"assessment:{assessment_id}", session["user_id"], session["email"], session["role"], request.client.host if request.client else "127.0.0.1", session["session_id"])
+    
+    return {"status": "success"}
+
+# --- Vendor Risk Scoring Endpoints ---
+from services.risk_scoring_service import calculate_assessment_score
+
+@app.post("/api/assessments/{assessment_id}/calculate-score")
+def calculate_score_endpoint(assessment_id: int, request: Request, session = Depends(get_current_user_with_mfa)):
+    from services.audit_log_service import get_audit_log, AuditAction
+    
+    # Needs auth, enforce RBAC (vendor users can only access their own)
+    # Auditors are read-only (so they can't calculate score)
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST", "VENDOR_USER"):
+        raise HTTPException(status_code=403, detail="Unauthorized role for score calculation.")
+        
+    db_conn = get_db()
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT vendor_id, status FROM assessments WHERE id = ?", (assessment_id,))
+    row = cursor.fetchone()
+    db_conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+        
+    vendor_id = row["vendor_id"]
+    
+    if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
+        raise HTTPException(status_code=403, detail="Unauthorized: You can only calculate score for your own vendor")
+
+    try:
+        result = calculate_assessment_score(assessment_id, vendor_id)
+        
+        # Log audit event
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action="RISK_SCORE_CALCULATED",
+            resource=f"assessment:{assessment_id}",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details=json.dumps({"score": result["total_score"], "risk_level": result["risk_level"]})
+        )
+        
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/vendors/{vendor_id}/risk-score")
+def get_vendor_risk_score(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    from services.audit_log_service import get_audit_log, AuditAction
+    
+    if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
+        raise HTTPException(status_code=403, detail="Unauthorized: You can only access your own vendor's risk score")
+        
+    db_conn = get_db()
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        SELECT * FROM risk_assessment_scores 
+        WHERE vendor_id = ? 
+        ORDER BY calculated_at DESC LIMIT 1
+    """, (vendor_id,))
+    row = cursor.fetchone()
+    db_conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="No completed risk assessment score found for this vendor")
+        
+    result = dict(row)
+    
+    # Log audit event
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action="RISK_SCORE_VIEWED",
+        resource=f"vendor:{vendor_id}:score",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"]
+    )
+    
+    return {
+        "total_score": result["total_score"],
+        "risk_level": result["risk_level"],
+        "categories": {
+            "cybersecurity": result["cybersecurity_score"],
+            "compliance": result["compliance_score"],
+            "financial_stability": result["financial_stability_score"],
+            "operational_risk": result["operational_risk_score"],
+            "data_privacy": result["data_privacy_score"]
+        },
+        "scoring_version": result["scoring_version"],
+        "calculated_at": result["calculated_at"]
+    }
+
+@app.get("/api/vendors/{vendor_id}/risk-history")
+def get_vendor_risk_history(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
+        raise HTTPException(status_code=403, detail="Unauthorized: You can only access your own vendor's risk score history")
+        
+    db_conn = get_db()
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        SELECT * FROM risk_assessment_scores 
+        WHERE vendor_id = ? 
+        ORDER BY calculated_at ASC
+    """, (vendor_id,))
+    rows = cursor.fetchall()
+    db_conn.close()
+    
+    return {"history": [dict(r) for r in rows]}
+
+# --- End Vendor Risk Scoring Endpoints ---
 
 if __name__ == "__main__":
     import uvicorn

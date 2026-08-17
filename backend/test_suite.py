@@ -28,24 +28,64 @@ def section(title):
     print(f"  {title}")
     print(f"{'='*60}")
 
+cookie_header = None
+
 def api_get(path, timeout=8):
     try:
-        res = urllib.request.urlopen(f"http://127.0.0.1:8000{path}", timeout=timeout)
+        req = urllib.request.Request(f"http://127.0.0.1:8000{path}")
+        if cookie_header:
+            req.add_header("Cookie", cookie_header)
+        res = urllib.request.urlopen(req, timeout=timeout)
         return json.loads(res.read()), res.getcode()
     except urllib.error.HTTPError as e:
-        return json.loads(e.read()), e.code
+        try:
+            return json.loads(e.read().decode('utf-8')), e.code
+        except Exception:
+            return None, e.code
     except Exception as ex:
         return None, str(ex)
+
+def login_for_test_suite():
+    global cookie_header
+    import time
+    exp = time.time() + 300
+    token = f"mock_oidc_subanalyst_analyst@acme.com_Sarah_accounts.google.com_test-client-id_{exp}"
+    req = urllib.request.Request(
+        "http://127.0.0.1:8000/api/auth/google-login",
+        data=json.dumps({"id_token": token}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    for attempt in range(10):
+        try:
+            res = urllib.request.urlopen(req)
+            set_cookie = res.headers.get("Set-Cookie")
+            if set_cookie:
+                cookie_header = set_cookie.split(";")[0]
+            return
+        except Exception as e:
+            time.sleep(0.5)
 
 # ── Setup path ────────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 1: AI SUMMARY ENGINE
-# ═══════════════════════════════════════════════════════════════════════════════
-section("1. AI Summary Engine — Unit Tests")
-from services.ai_summary_engine import generate_ai_executive_summary
+from pathlib import Path
+creds_file = Path(__file__).resolve().parent / "vault_test_creds.env"
+if creds_file.exists():
+    for line in creds_file.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            line_clean = line.replace("export ", "").strip()
+            k, v = line_clean.split("=", 1)
+            os.environ[k] = v
+
+if __name__ == "__main__":
+    global_server_proc = None
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # SECTION 1: AI SUMMARY ENGINE
+    # ═══════════════════════════════════════════════════════════════════════════════
+    section("1. AI Summary Engine — Unit Tests")
+    from services.ai_summary_engine import generate_ai_executive_summary
 
 # Test 1.1 — Critical exposure vendor
 high_risk = generate_ai_executive_summary(
@@ -159,13 +199,17 @@ def is_port_open(port=8000):
         return s.connect_ex(('127.0.0.1', port)) == 0
 
 server_proc = None
+server_log = None
 if not is_port_open(8000):
+    server_log = open("uvicorn.log", "w")
     server_proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000", "--log-level", "warning"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stdout=server_log,
+        stderr=server_log
     )
     time.sleep(1.5)
+
+login_for_test_suite()
 
 # GET /health
 data, code = api_get("/health")
@@ -212,10 +256,13 @@ if isinstance(stats, dict):
 
 # POST /api/vendors — invalid domain
 import urllib.request, urllib.parse
+headers = {"Content-Type": "application/json"}
+if cookie_header:
+    headers["Cookie"] = cookie_header
 req = urllib.request.Request(
     "http://127.0.0.1:8000/api/vendors",
     data=json.dumps({"name": "BadVendor", "domain": "notadomain"}).encode(),
-    headers={"Content-Type": "application/json"},
+    headers=headers,
     method="POST"
 )
 try:
@@ -328,4 +375,6 @@ print(f"\n  {'ALL TESTS PASSED' if failed == 0 else f'{failed} TESTS FAILED'}")
 print()
 if server_proc:
     server_proc.terminate()
+if server_log:
+    server_log.close()
 sys.exit(0 if failed == 0 else 1)

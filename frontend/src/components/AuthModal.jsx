@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, 
   Lock, 
@@ -22,108 +22,119 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
   const [vendorDomain, setVendorDomain] = useState('datavault.io');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (isOpen && window.google) {
+      try {
+        window.google.accounts.id.initialize({
+          client_id: "your-client-id.apps.googleusercontent.com",
+          callback: (response) => {
+            if (response.credential) {
+              handleLoginWithToken(response.credential);
+            }
+          }
+        });
+        window.google.accounts.id.renderButton(
+          document.getElementById("google-signin-button"),
+          { theme: "filled_blue", size: "large", width: "100%" }
+        );
+      } catch (err) {
+        console.error("Failed to initialize Google Sign-in:", err);
+      }
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
+  const handleLoginWithToken = async (idToken) => {
+    setLoading(true);
+    try {
+      const res = await fetch('http://localhost:8000/api/auth/google-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: idToken })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        onLogin(data.user);
+        if (onClose) onClose();
+      } else {
+        const errData = await res.json();
+        alert(`Login failed: ${errData.detail || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Login failed: Connection error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleQuickDemoCiso = () => {
-    onLogin({
-      role: 'enterprise',
-      name: 'Sarah Jenkins',
-      title: 'Chief Information Security Officer (CISO)',
-      organization: 'Acme Enterprise',
-      email: 'ciso@acme-corp.com',
-      avatar: 'SJ'
-    });
-    if (onClose) onClose();
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const mockToken = `mock_oidc_subciso_ciso@acme-corp.com_Sarah Jenkins_accounts.google.com_test-client-id_${exp}`;
+    handleLoginWithToken(mockToken);
   };
 
   const handleQuickDemoVendor = (vendor) => {
-    onLogin({
-      role: 'vendor',
-      vendorId: vendor.id,
-      name: vendor.name,
-      domain: vendor.domain,
-      sector: vendor.sector,
-      email: `security@${vendor.domain}`,
-      avatar: vendor.name.substring(0, 2).toUpperCase()
-    });
-    if (onClose) onClose();
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const mockToken = `mock_oidc_subvendor_${vendor.domain}_vendor@${vendor.domain}_${vendor.name}_accounts.google.com_test-client-id_${exp}`;
+    handleLoginWithToken(mockToken);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    setLoading(true);
-
-    setTimeout(() => {
-      setLoading(false);
-      if (role === 'enterprise') {
-        onLogin({
-          role: 'enterprise',
-          name: email.split('@')[0].toUpperCase(),
-          title: 'Security Administrator',
-          organization: 'Acme Enterprise',
-          email: email,
-          avatar: email.substring(0, 2).toUpperCase()
-        });
-      } else {
-        const found = vendors.find(v => v.id === Number(selectedVendorId)) || {
-          id: selectedVendorId || 1,
-          name: vendorDomain.split('.')[0].toUpperCase(),
-          domain: vendorDomain,
-          sector: 'Third-Party Vendor'
-        };
-        onLogin({
-          role: 'vendor',
-          vendorId: found.id,
-          name: found.name,
-          domain: found.domain,
-          sector: found.sector,
-          email: email || `security@${found.domain}`,
-          avatar: found.name.substring(0, 2).toUpperCase()
-        });
-      }
-      if (onClose) onClose();
-    }, 600);
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const mockToken = `mock_oidc_submanual_${email}_${email.split('@')[0]}_accounts.google.com_test-client-id_${exp}`;
+    handleLoginWithToken(mockToken);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
-      <div className="relative w-full max-w-md bg-gradient-to-b from-[#0e1626] via-[#0a0f1d] to-[#070a14] border border-emerald-500/30 rounded-3xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-start md:items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn overflow-y-auto min-h-[100dvh] box-border">
+      <div 
+        className="relative w-full bg-gradient-to-b from-[#0e1626] via-[#0a0f1d] to-[#070a14] border border-emerald-500/30 rounded-3xl shadow-2xl overflow-hidden my-auto"
+        style={{
+          width: 'min(100% - 32px, 680px)',
+          maxWidth: '680px',
+          boxSizing: 'border-box',
+          marginInline: 'auto'
+        }}
+      >
         {/* Glow accent header */}
         <div className="h-2 bg-gradient-to-r from-cyan-500 via-emerald-400 to-violet-500" />
 
-        <div className="p-6 space-y-6">
+        <div className="p-4 md:p-8 space-y-4 md:space-y-6">
           {/* Brand & Title */}
-          <div className="text-center space-y-2">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-[#00f090] shadow-lg shadow-emerald-950/40 mb-1">
-              <ShieldCheck className="w-8 h-8" />
+          <div className="text-center space-y-1.5 md:space-y-2">
+            <div className="inline-flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-[#00f090] shadow-lg shadow-emerald-950/40 mb-1">
+              <ShieldCheck className="w-6 h-6 md:w-8 md:h-8" />
             </div>
-            <h2 className="text-2xl font-black tracking-tight text-white flex items-center justify-center gap-2">
+            <h2 className="text-xl md:text-2xl font-black tracking-tight text-white flex items-center justify-center gap-2">
               <span>VendorRisk 360</span>
-              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-[#00f090] border border-emerald-500/30">
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-[#00f090] border border-emerald-500/30">
                 AUTH PORTAL
               </span>
             </h2>
-            <p className="text-xs text-slate-400 max-w-xs mx-auto">
+            <p className="text-[11px] md:text-xs text-slate-400 max-w-xs mx-auto">
               Secure Unified Login for Enterprise CISOs & Third-Party Security Teams
             </p>
           </div>
 
           {/* Role Switching Selector */}
-          <div className="grid grid-cols-2 p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 text-xs font-bold">
+          <div className="flex p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 text-xs font-bold w-full box-border gap-1">
             <button
               type="button"
               onClick={() => {
                 setRole('enterprise');
                 setEmail('ciso@acme-corp.com');
               }}
-              className={`py-2.5 px-3 rounded-xl transition-all flex items-center justify-center gap-2 ${
+              className={`flex-1 min-w-0 py-2.5 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 min-h-[44px] ${
                 role === 'enterprise'
                   ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 shadow-md font-extrabold'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Briefcase className="w-3.5 h-3.5" />
-              Enterprise CISO
+              <Briefcase className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="truncate">Enterprise CISO</span>
             </button>
 
             <button
@@ -132,29 +143,42 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
                 setRole('vendor');
                 setEmail('security@datavault.io');
               }}
-              className={`py-2.5 px-3 rounded-xl transition-all flex items-center justify-center gap-2 ${
+              className={`flex-1 min-w-0 py-2.5 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 min-h-[44px] ${
                 role === 'vendor'
                   ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-md font-extrabold'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Globe className="w-3.5 h-3.5" />
-              Vendor Login
+              <Globe className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="truncate">Vendor Login</span>
             </button>
           </div>
 
+          {/* Google Identity Secure Login */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              🛡️ Google Identity Secure Login
+            </div>
+            <div id="google-signin-button" className="w-full flex justify-center py-1 box-border"></div>
+          </div>
+
           {/* Quick 1-Click Demo Login Options */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
-              <span>⚡ Quick Demo Instant Sign-In</span>
-              <Sparkles className="w-3 h-3 text-amber-400" />
+              <div className="flex items-center gap-1.5">
+                <span>⚡ Quick Demo Instant Sign-In</span>
+                <span className="px-1.5 py-0.5 rounded text-[8px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold uppercase">
+                  Demo Mode (Dev Only)
+                </span>
+              </div>
+              <Sparkles className="w-3 h-3 text-amber-400 animate-pulse" />
             </div>
 
             {role === 'enterprise' ? (
               <button
                 type="button"
                 onClick={handleQuickDemoCiso}
-                className="w-full p-3 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center justify-between transition-all group"
+                className="w-full p-2.5 md:p-3 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center justify-between transition-all group min-h-[44px] box-border"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-300 font-bold flex items-center justify-center">
@@ -174,7 +198,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
                     key={v.id}
                     type="button"
                     onClick={() => handleQuickDemoVendor(v)}
-                    className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 text-slate-200 text-xs text-left transition-all group"
+                    className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 text-slate-200 text-xs text-left transition-all group min-h-[44px] box-border"
                   >
                     <div className="font-bold text-slate-100 truncate group-hover:text-cyan-300">{v.name}</div>
                     <div className="text-[10px] text-slate-400 truncate">{v.domain}</div>
@@ -190,7 +214,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3.5 md:space-y-4">
             {role === 'vendor' && (
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
@@ -203,7 +227,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
                     const v = vendors.find(item => item.id === Number(e.target.value));
                     if (v) setVendorDomain(v.domain);
                   }}
-                  className="w-full bg-slate-900 border border-slate-700 focus:border-cyan-400 rounded-xl px-3 py-2.5 text-xs text-slate-100 focus:outline-none"
+                  className="w-full bg-slate-900 border border-slate-700 focus:border-cyan-400 rounded-xl px-3 py-2 md:py-2.5 text-xs text-slate-100 focus:outline-none min-h-[44px] box-border"
                 >
                   {vendors.map((v) => (
                     <option key={v.id} value={v.id}>
@@ -223,7 +247,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none"
+                className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2 md:py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none min-h-[44px] box-border"
                 placeholder={role === 'enterprise' ? "ciso@acme-corp.com" : "security@vendor.com"}
               />
             </div>
@@ -237,7 +261,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none"
+                className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2 md:py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none min-h-[44px] box-border"
                 placeholder="••••••••••••"
               />
             </div>
@@ -245,7 +269,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
             <button
               type="submit"
               disabled={loading}
-              className={`w-full py-3 rounded-2xl font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2 ${
+              className={`w-full py-2.5 md:py-3.5 rounded-2xl font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2 min-h-[44px] box-border ${
                 role === 'enterprise'
                   ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950'
                   : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950'
@@ -263,11 +287,11 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
           </form>
 
           {onClose && (
-            <div className="text-center pt-2">
+            <div className="text-center pt-1 md:pt-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                className="text-xs text-slate-400 hover:text-slate-200 transition-colors min-h-[44px] px-4 py-2"
               >
                 Continue as Guest Explorer
               </button>

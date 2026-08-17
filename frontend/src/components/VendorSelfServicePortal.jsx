@@ -32,6 +32,7 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
   const [remediations, setRemediations] = useState([]);
   const [compliance, setCompliance] = useState([]);
   const [subVendors, setSubVendors] = useState([]);
+  const [deterministicScore, setDeterministicScore] = useState(null);
   const [loading, setLoading] = useState(true);
   
   // Modals state
@@ -60,13 +61,14 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
   const fetchVendorDetails = async () => {
     setLoading(true);
     try {
-      const [vRes, sRes, iRes, rRes, cRes, subRes] = await Promise.all([
+      const [vRes, sRes, iRes, rRes, cRes, subRes, detRes] = await Promise.all([
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/shap-risk`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/incidents`),
         fetch(`http://localhost:8000/api/remediation`),
         fetch(`http://localhost:8000/api/compliance?vendor_id=${user.vendorId}`),
-        fetch(`http://localhost:8000/api/vendors/${user.vendorId}/sub-vendors`)
+        fetch(`http://localhost:8000/api/vendors/${user.vendorId}/sub-vendors`),
+        fetch(`http://localhost:8000/api/vendors/${user.vendorId}/risk-score`)
       ]);
 
       if (vRes.ok) setVendorData(await vRes.json());
@@ -81,6 +83,7 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
       }
       if (cRes.ok) setCompliance(await cRes.json());
       if (subRes.ok) setSubVendors(await subRes.json());
+      if (detRes && detRes.ok) setDeterministicScore(await detRes.json());
     } catch (err) {
       console.error("Error fetching vendor portal details:", err);
     } finally {
@@ -150,7 +153,8 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
 
   const v = vendorData?.vendor;
   const assessment = vendorData?.risk_assessment;
-  const score = assessment?.overall_score ?? v?.risk_score ?? 30;
+  const score = deterministicScore?.total_score ?? assessment?.overall_score ?? v?.risk_score ?? 30;
+  const riskTier = deterministicScore?.risk_level ?? assessment?.risk_tier ?? v?.risk_tier;
 
   return (
     <div className="min-h-screen bg-[#070a13] text-slate-100 p-6 space-y-6">
@@ -209,19 +213,19 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
                   Your Live Enterprise Risk Evaluation
                 </div>
                 <div className="text-3xl font-black text-white flex items-center gap-3">
-                  <span>{assessment?.risk_tier || v?.risk_tier} RISK</span>
+                  <span>{riskTier} RISK</span>
                   <span className={`text-xs px-3 py-1 rounded-full border ${
-                    score >= 70
+                    score >= 60
                       ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                      : score >= 40
+                      : score >= 30
                       ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                       : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   }`}>
-                    {score >= 70 ? 'High Risk — Action Required' : score >= 40 ? 'Moderate Concern' : 'Excellent Security Posture'}
+                    {score >= 60 ? 'High Risk — Action Required' : score >= 30 ? 'Moderate Concern' : 'Excellent Security Posture'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 max-w-md">
-                  Calculated dynamically across 7 live threat vectors (Google News, CISA KEV, AbuseIPDB, Stock, SSL, DNS, IPinfo).
+                  {deterministicScore ? `Deterministic Assessment Score based on Questionnaire.` : `Calculated dynamically across 7 live threat vectors.`}
                 </p>
               </div>
 

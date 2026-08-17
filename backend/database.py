@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 DB_PATH = os.path.join(os.path.dirname(__file__), "vendor_risk.db")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -41,7 +41,17 @@ def init_db():
             custom_ticker TEXT,
             compliance_certs TEXT DEFAULT 'SOC2 Type II',
             last_checked_at TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            vendor_name TEXT,
+            contact_name TEXT,
+            contact_email TEXT,
+            contact_phone TEXT,
+            service_category TEXT,
+            criticality TEXT,
+            data_handled TEXT,
+            status TEXT DEFAULT 'ACTIVE',
+            updated_at TEXT,
+            created_by TEXT
         )
     """)
 
@@ -70,7 +80,17 @@ def init_db():
         "data_sensitivity TEXT DEFAULT 'Public Data'",
         "contract_value INTEGER DEFAULT 0",
         "custom_ticker TEXT",
-        "compliance_certs TEXT DEFAULT 'SOC2 Type II'"
+        "compliance_certs TEXT DEFAULT 'SOC2 Type II'",
+        "vendor_name TEXT",
+        "contact_name TEXT",
+        "contact_email TEXT",
+        "contact_phone TEXT",
+        "service_category TEXT",
+        "criticality TEXT",
+        "data_handled TEXT",
+        "status TEXT DEFAULT 'ACTIVE'",
+        "updated_at TEXT",
+        "created_by TEXT"
     ]:
         try:
             cursor.execute(f"ALTER TABLE vendors ADD COLUMN {col_def}")
@@ -152,6 +172,50 @@ def init_db():
         cursor.execute("ALTER TABLE incidents ADD COLUMN category TEXT DEFAULT 'Security Breach'")
     except Exception:
         pass
+
+    # Risk Assessments Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS assessments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'DRAFT',
+            created_at TEXT NOT NULL,
+            submitted_at TEXT,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
+        )
+    """)
+
+    # Assessment Answers Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS assessment_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assessment_id INTEGER NOT NULL,
+            question_id TEXT NOT NULL,
+            category TEXT NOT NULL,
+            answer_value TEXT NOT NULL,
+            FOREIGN KEY (assessment_id) REFERENCES assessments (id) ON DELETE CASCADE
+        )
+    """)
+
+    # Risk Assessment Scores Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS risk_assessment_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assessment_id INTEGER NOT NULL UNIQUE,
+            vendor_id INTEGER NOT NULL,
+            total_score REAL NOT NULL,
+            risk_level TEXT NOT NULL,
+            cybersecurity_score REAL NOT NULL,
+            compliance_score REAL NOT NULL,
+            financial_stability_score REAL NOT NULL,
+            operational_risk_score REAL NOT NULL,
+            data_privacy_score REAL NOT NULL,
+            scoring_version TEXT NOT NULL,
+            calculated_at TEXT NOT NULL,
+            FOREIGN KEY (assessment_id) REFERENCES assessments (id) ON DELETE CASCADE,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
+        )
+    """)
 
     # API Cache Table
     cursor.execute("""

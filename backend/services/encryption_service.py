@@ -276,13 +276,17 @@ class EncryptionService:
     def _create_backend() -> _MockTransitBackend | _VaultTransitBackend:
         from services.secret_loader import is_vault_configured, load_vault_credentials
         if is_vault_configured():
-            creds = load_vault_credentials()
-            return _VaultTransitBackend(
-                vault_addr=creds["vault_addr"],
-                role_id=creds["vault_role_id"],
-                secret_id=creds["vault_secret_id"],
-                ca_cert=creds["vault_ca_cert"],
-            )
+            try:
+                creds = load_vault_credentials()
+                return _VaultTransitBackend(
+                    vault_addr=creds["vault_addr"],
+                    role_id=creds["vault_role_id"],
+                    secret_id=creds["vault_secret_id"],
+                    ca_cert=creds["vault_ca_cert"],
+                )
+            except Exception as exc:
+                logger.warning("Failed to initialize Vault backend (%s), falling back to mock backend", exc)
+                return _MockTransitBackend()
         return _MockTransitBackend()
 
     @property
