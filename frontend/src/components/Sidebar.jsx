@@ -12,16 +12,19 @@ import {
   Award,
   CheckSquare,
   BarChart3,
-  FileText
+  FileText,
+  Bell
 } from 'lucide-react';
 
-export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criticalCount, activeIncidentsCount = 0 }) {
+export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criticalCount, activeIncidentsCount = 0, unreadAlertCount = 0 }) {
   const navItems = [
     { id: 'overview', label: 'Overview Dashboard', icon: LayoutDashboard },
     { id: 'incidents', label: 'Incident Center', icon: Flame, badge: activeIncidentsCount > 0 ? `${activeIncidentsCount} Active` : null },
     { id: 'compliance', label: 'Compliance Manager', icon: Award },
     { id: 'remediation', label: 'Remediation Tasks', icon: CheckSquare },
+    { id: 'operational-risk', label: 'Operational Risk', icon: BarChart3 },
     { id: 'documents', label: 'Document Manager', icon: FileText },
+    { id: 'alerts', label: 'Alert Center', icon: Bell, badge: unreadAlertCount > 0 ? `${unreadAlertCount} New` : null, badgePulse: true },
     { id: 'contagion', label: 'Risk Contagion Map', icon: Network, badge: criticalCount > 0 ? `${criticalCount} Critical` : null },
     { id: 'vendors', label: 'Monitored Vendors', icon: Building2 },
     { id: 'feed', label: 'Live Activity Stream', icon: Activity },
@@ -94,7 +97,11 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenAddModal, criti
                 </div>
 
                 {item.badge && (
-                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                  <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+                    item.id === 'alerts'
+                      ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
+                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                  } ${item.badgePulse ? 'animate-pulse' : ''}`}>
                     {item.badge}
                   </span>
                 )}

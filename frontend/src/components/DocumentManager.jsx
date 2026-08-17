@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FileText, 
+  FileText as FilePdf,
   Upload, 
   Search, 
   Calendar, 

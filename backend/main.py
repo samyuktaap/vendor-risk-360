@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -14,7 +15,10 @@ from database import (
     add_compliance_framework, get_vendor_compliance_frameworks, update_compliance_framework, get_compliance_summary,
     create_remediation_task, get_vendor_remediation_tasks, update_remediation_task, get_remediation_summary,
     add_sub_vendor, get_sub_vendors, delete_sub_vendor,
-    COMPLIANCE_FRAMEWORKS
+    get_vendor_operational_risk, upsert_vendor_operational_risk, get_operational_risk_summary,
+    COMPLIANCE_FRAMEWORKS,
+    add_document, get_vendor_documents, get_document_by_id,
+    create_alert, get_alerts, get_alert_by_id, mark_alert_read, mark_alert_acknowledged, get_unread_alert_count
 )
 from seed_data import seed_database
 from services.risk_engine import compute_vendor_risk_score
@@ -41,7 +45,7 @@ def startup_event():
 class VendorCreate(BaseModel):
     name: str = Field(..., example="Datadog")
     domain: str = Field(..., example="datadoghq.com")
-    sector: str = Field(..., example="Cloud Observability")
+    sector: Optional[str] = Field(default="Technology", example="Cloud Observability")
     criticality_tier: Optional[str] = Field(default="Tier 2 - Business Operational", example="Tier 1 - Mission Critical")
     data_sensitivity: Optional[str] = Field(default="Public Data", example="PII / PHI")
     contract_value: Optional[int] = Field(default=0, example=250000)
@@ -124,7 +128,8 @@ def get_vendors(session = Depends(get_current_session)):
         SELECT
             v.id, v.name, v.domain, v.sector, v.risk_tier, v.risk_score,
             v.hibp_score, v.news_score, v.sanctions_score, v.abuse_score,
-            v.criticality_tier, v.data_sensitivity, v.contract_value, v.compliance_certs,
+            v.criticality_tier, v.data_sensitivity, v.contract_value,
+            v.custom_ticker, v.compliance_certs,
             v.last_checked_at, v.created_at,
             COALESCE((
                 SELECT SUM(score_impact) FROM incidents
@@ -316,6 +321,7 @@ def refresh_vendor_risk(vendor_id: int, session = Depends(get_current_session)):
         raise HTTPException(status_code=404, detail="Vendor not found.")
 
     v = dict(row)
+    old_score = v.get("risk_score", 0) or 0
     score_data = compute_vendor_risk_score(
         domain=v["domain"], 
         vendor_name=v["name"], 
@@ -372,6 +378,20 @@ def refresh_vendor_risk(vendor_id: int, session = Depends(get_current_session)):
 
     conn.commit()
     conn.close()
+
+    # --- Alert engine hooks ---
+    new_score = score_data["overall_score"]
+    company_id = session.get("company_id")
+    if company_id:
+        from services.alert_engine import evaluate_high_risk_vendor, evaluate_major_risk_change
+        try:
+            evaluate_high_risk_vendor(vendor_id, company_id, new_score, v["name"])
+        except Exception as ae:
+            import logging; logging.getLogger(__name__).warning("Alert hook HIGH_RISK_VENDOR failed: %s", ae)
+        try:
+            evaluate_major_risk_change(vendor_id, company_id, old_score, new_score, v["name"])
+        except Exception as ae:
+            import logging; logging.getLogger(__name__).warning("Alert hook MAJOR_RISK_CHANGE failed: %s", ae)
 
     return {
         "message": f"Refreshed security risk data for {v['name']}.",
@@ -567,6 +587,46 @@ def get_activity_feed(limit: int = Query(20, ge=1, le=100), session = Depends(ge
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+@app.get("/api/vendors/{vendor_id}/risk-events")
+def get_vendor_risk_events(vendor_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, vendor_id, vendor_name, source, title, summary, risk_level, url, timestamp
+        FROM risk_events
+        WHERE vendor_id = ?
+        ORDER BY timestamp DESC
+    """, (vendor_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.get("/api/stats")
+def get_dashboard_stats():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as total FROM vendors")
+    total_vendors = cursor.fetchone()["total"]
+    cursor.execute("SELECT COUNT(*) as critical FROM vendors WHERE risk_tier = 'CRITICAL'")
+    critical_count = cursor.fetchone()["critical"]
+    cursor.execute("SELECT COUNT(*) as high FROM vendors WHERE risk_tier = 'HIGH'")
+    high_count = cursor.fetchone()["high"]
+    cursor.execute("SELECT COUNT(*) as medium FROM vendors WHERE risk_tier = 'MEDIUM'")
+    medium_count = cursor.fetchone()["medium"]
+    cursor.execute("SELECT COUNT(*) as low FROM vendors WHERE risk_tier = 'LOW'")
+    low_count = cursor.fetchone()["low"]
+    cursor.execute("SELECT AVG(risk_score) as avg_score FROM vendors")
+    avg_score = cursor.fetchone()["avg_score"] or 0
+    conn.close()
+    return {
+        "total_vendors": total_vendors,
+        "critical_vendors": critical_count,
+        "high_risk_vendors": high_count,
+        "medium_risk_vendors": medium_count,
+        "low_risk_vendors": low_count,
+        "average_risk_score": round(avg_score, 1)
+    }
 
 @app.get("/api/quota")
 def get_quota_debug_info(session = Depends(get_current_session)):
@@ -943,6 +1003,42 @@ def get_remediation_stats(session = Depends(get_current_session)):
     
     summary = get_remediation_summary(company_id=user_company_id)
     return {"summary": summary}
+
+# Operational Risk Module API Endpoints
+class OperationalRiskUpdate(BaseModel):
+    sla_compliance_pct: Optional[float] = Field(default=99.5, example=99.8)
+    monthly_downtime_hours: Optional[float] = Field(default=1.0, example=0.5)
+    incident_frequency: Optional[int] = Field(default=1, example=2)
+    delivery_delays_count: Optional[int] = Field(default=0, example=1)
+    quality_defect_rate_pct: Optional[float] = Field(default=0.2, example=0.1)
+    support_response_time_hrs: Optional[float] = Field(default=1.5, example=1.2)
+    bcp_status: Optional[str] = Field(default="VERIFIED", example="VERIFIED")
+    bcp_audit_score: Optional[int] = Field(default=85, example=92)
+    dr_rto_hours: Optional[float] = Field(default=4.0, example=2.0)
+    dr_rpo_hours: Optional[float] = Field(default=1.0, example=0.5)
+    dr_testing_status: Optional[str] = Field(default="PASSED_Q2", example="PASSED_Q2")
+    dependency_level: Optional[str] = Field(default="MODERATE", example="HIGH_SINGLE_POINT")
+    replaceability_score: Optional[int] = Field(default=70, example=45)
+
+@app.get("/api/operational-risk/summary")
+def get_operational_risk_summary_endpoint():
+    """Get aggregate Operational Risk KPIs across all vendors."""
+    return get_operational_risk_summary()
+
+@app.get("/api/vendors/{vendor_id}/operational-risk")
+def get_vendor_operational_risk_endpoint(vendor_id: int):
+    """Fetch operational risk metrics for a specific vendor."""
+    op_risk = get_vendor_operational_risk(vendor_id)
+    return op_risk
+
+@app.post("/api/vendors/{vendor_id}/operational-risk")
+def update_vendor_operational_risk_endpoint(vendor_id: int, payload: OperationalRiskUpdate):
+    """Update or create operational risk scorecard for a vendor."""
+    updated = upsert_vendor_operational_risk(vendor_id, payload.dict(exclude_unset=True))
+    return {
+        "message": f"Operational Risk profile updated for vendor #{vendor_id}",
+        "operational_risk": updated
+    }
 
 # 4th-Party Sub-Vendor Supply Chain Endpoints
 class SubVendorCreate(BaseModel):
@@ -1492,9 +1588,289 @@ def get_vendor_risk_history(vendor_id: int, request: Request, session = Depends(
 
 # --- End Vendor Risk Scoring Endpoints ---
 
+# ---------------------------------------------------------------------------
+# Document Management (MVP)
+# ---------------------------------------------------------------------------
+import uuid
+from pathlib import Path
+from services.file_encryption_service import encrypt_file_streaming, decrypt_file_streaming
+
+DOCUMENTS_DIR = os.path.join(os.path.dirname(__file__), "storage", "documents")
+os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+
+ALLOWED_DOCUMENT_TYPES = {"SOC 2", "ISO 27001", "Contract", "Insurance", "Security Evidence"}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+@app.post("/api/vendors/{vendor_id}/documents")
+async def upload_document(
+    vendor_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    document_type: str = Form(...),
+    expiry_date: Optional[str] = Form(None),
+    session = Depends(get_current_session)
+):
+    from services.audit_log_service import get_audit_log
+    
+    if session["role"] not in ["SUPER_ADMIN", "ADMIN", "EDITOR", "VENDOR_USER"]:
+        raise HTTPException(status_code=403, detail="Unauthorized to upload documents")
+        
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Vendor does not belong to your company")
+        
+    if document_type not in ALLOWED_DOCUMENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid document type. Allowed: {ALLOWED_DOCUMENT_TYPES}")
+        
+    # Read first chunk to check size implicitly and then get size
+    file.file.seek(0, 2)
+    size_bytes = file.file.tell()
+    file.file.seek(0)
+    
+    if size_bytes > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
+    if size_bytes == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    object_id = str(uuid.uuid4())
+    storage_path = Path(DOCUMENTS_DIR) / f"{object_id}.enc"
+    
+    try:
+        # Stream encrypt to disk
+        manifest = encrypt_file_streaming(
+            source=file.file,
+            dest_path=storage_path,
+            vendor_id=vendor_id,
+            doc_type=document_type,
+            tenant_id=str(session["company_id"])
+        )
+            
+        doc_id = add_document(
+            company_id=session["company_id"],
+            vendor_id=vendor_id,
+            uploader_id=session["user_id"],
+            document_type=document_type,
+            original_filename=file.filename,
+            object_id=object_id,
+            size_bytes=size_bytes,
+            expiry_date=expiry_date,
+            wrapped_dek=manifest["wrapped_dek"],
+            integrity_hash=manifest["ct_sha256"]
+        )
+        
+        # Log Audit
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action="DOCUMENT_UPLOADED",
+            resource=f"document:{doc_id}",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details=f"{document_type} - {file.filename}"
+        )
+        
+        return {"status": "success", "document_id": doc_id, "object_id": object_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Encryption failed: {str(e)}")
+
+@app.get("/api/vendors/{vendor_id}/documents")
+def list_vendor_documents(vendor_id: int, session = Depends(get_current_session)):
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Vendor does not belong to your company")
+        
+    docs = get_vendor_documents(vendor_id, session["company_id"])
+    return {"documents": docs}
+
+@app.get("/api/documents/{document_id}/download")
+def download_document(document_id: int, request: Request, session = Depends(get_current_session)):
+    doc = get_document_by_id(document_id, session["company_id"])
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
+        
+    storage_path = Path(DOCUMENTS_DIR) / f"{doc['object_id']}.enc"
+    if not storage_path.exists():
+        raise HTTPException(status_code=404, detail="Encrypted document missing from storage")
+        
+    from services.audit_log_service import get_audit_log
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action="DOCUMENT_DECRYPTED",
+        resource=f"document:{document_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details=f"Downloaded {doc['original_filename']}"
+    )
+
+    def file_streamer():
+        yield from decrypt_file_streaming(
+            source_path=storage_path,
+            wrapped_dek=doc["wrapped_dek"],
+            vendor_id=doc["vendor_id"],
+            doc_type=doc["document_type"],
+            expected_ct_sha256=doc["integrity_hash"]
+        )
+
+    return StreamingResponse(
+        file_streamer(), 
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{doc["original_filename"]}"'}
+    )
+
+# ---------------------------------------------------------------------------
+# Alert Management Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/alerts/count")
+def get_alert_count(session = Depends(get_current_session)):
+    """Return unread alert count for header badge (lightweight poll endpoint)."""
+    company_id = session.get("company_id")
+    if not company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    count = get_unread_alert_count(company_id)
+    return {"unread": count}
+
+@app.get("/api/alerts")
+def list_alerts(
+    request: Request,
+    alert_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    vendor_id: Optional[int] = Query(None),
+    session = Depends(get_current_session)
+):
+    """List all alerts for authenticated company. Lazily runs scheduled checks."""
+    from services.audit_log_service import get_audit_log
+    company_id = session.get("company_id")
+    if not company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+
+    # Lazy scheduled checks — idempotent via dedup keys
+    try:
+        from services.alert_engine import run_all_scheduled_checks
+        run_all_scheduled_checks(company_id)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Scheduled alert checks failed: %s", e)
+
+    alerts = get_alerts(company_id, vendor_id=vendor_id, alert_type=alert_type, status=status)
+
+    # Audit ALERT_VIEWED
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action="ALERT_VIEWED",
+        resource="alerts:list",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details=f"Listed {len(alerts)} alerts"
+    )
+
+    return {"alerts": alerts, "total": len(alerts)}
+
+
+@app.get("/api/alerts/{alert_id}")
+def get_alert_detail(alert_id: int, request: Request, session = Depends(get_current_session)):
+    """Get single alert — enforces company isolation."""
+    from services.audit_log_service import get_audit_log
+    company_id = session.get("company_id")
+    if not company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+
+    alert = get_alert_by_id(alert_id, company_id)
+    if not alert:
+        # Log ALERT_ACCESS_DENIED — the alert may exist but belong to another company
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action="ALERT_ACCESS_DENIED",
+            resource=f"alert:{alert_id}",
+            outcome="DENIED",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details=f"Alert {alert_id} not found or cross-company access attempt"
+        )
+        raise HTTPException(status_code=404, detail="Alert not found or access denied")
+
+    return {"alert": alert}
+
+
+@app.post("/api/alerts/{alert_id}/read")
+def read_alert(alert_id: int, request: Request, session = Depends(get_current_session)):
+    """Mark alert as READ. Lifecycle: UNREAD → READ."""
+    from services.audit_log_service import get_audit_log
+    company_id = session.get("company_id")
+    if not company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+
+    # Verify alert exists and belongs to this company
+    alert = get_alert_by_id(alert_id, company_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found or access denied")
+
+    updated = mark_alert_read(alert_id, company_id)
+    if not updated:
+        raise HTTPException(status_code=409, detail="Alert is not in UNREAD state or already processed")
+
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action="ALERT_READ",
+        resource=f"alert:{alert_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"]
+    )
+
+    return {"status": "READ", "alert_id": alert_id}
+
+
+@app.post("/api/alerts/{alert_id}/acknowledge")
+def acknowledge_alert(alert_id: int, request: Request, session = Depends(get_current_session)):
+    """Mark alert as ACKNOWLEDGED. Lifecycle: UNREAD/READ → ACKNOWLEDGED."""
+    from services.audit_log_service import get_audit_log
+    company_id = session.get("company_id")
+    if not company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+
+    # Verify alert exists and belongs to this company
+    alert = get_alert_by_id(alert_id, company_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found or access denied")
+
+    updated = mark_alert_acknowledged(alert_id, company_id)
+    if not updated:
+        raise HTTPException(status_code=409, detail="Alert is already acknowledged")
+
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action="ALERT_ACKNOWLEDGED",
+        resource=f"alert:{alert_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"]
+    )
+
+    return {"status": "ACKNOWLEDGED", "alert_id": alert_id}
+
+# --- End Alert Management Endpoints ---
+
 if __name__ == "__main__":
     import uvicorn
     # Enforce workers=1 (Priority 3: SQLite multi-process safety)
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, workers=1)
-
-
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True, workers=1)

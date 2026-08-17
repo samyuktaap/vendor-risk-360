@@ -28,7 +28,7 @@ from services.xposedOrNotService import check_xposedornot
 
 def compute_vendor_risk_score(domain: str, vendor_name: str, email: str = None, ip_address: str = None, software: str = None, country: str = None, custom_ticker: str = None, vendor_id: int = None):
     # Lookup vendor_id by domain if not provided directly
-    from database import get_db, get_vendor_incident_score_impact
+    from database import get_db, get_vendor_incident_score_impact, get_vendor_operational_risk
     if not vendor_id:
         try:
             conn = get_db()
@@ -215,7 +215,8 @@ def compute_vendor_risk_score(domain: str, vendor_name: str, email: str = None, 
             },
             "virustotal": vt_res,
             "nvd": nvd_res,
-            "xposedornot": xposed_res
+            "xposedornot": xposed_res,
+            "operational": (get_vendor_operational_risk(vendor_id) if vendor_id else {})
         },
         "recommended_actions": recommendations,
         "history_30d": history_trend,

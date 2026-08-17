@@ -79,6 +79,29 @@ def init_db():
         )
     """)
 
+    # Operational Risk Module Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS vendor_operational_risk (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER UNIQUE NOT NULL,
+            sla_compliance_pct REAL DEFAULT 99.5,
+            monthly_downtime_hours REAL DEFAULT 1.0,
+            incident_frequency INTEGER DEFAULT 1,
+            delivery_delays_count INTEGER DEFAULT 0,
+            quality_defect_rate_pct REAL DEFAULT 0.2,
+            support_response_time_hrs REAL DEFAULT 1.5,
+            bcp_status TEXT DEFAULT 'VERIFIED',
+            bcp_audit_score INTEGER DEFAULT 85,
+            dr_rto_hours REAL DEFAULT 4.0,
+            dr_rpo_hours REAL DEFAULT 1.0,
+            dr_testing_status TEXT DEFAULT 'PASSED_Q2',
+            dependency_level TEXT DEFAULT 'MODERATE',
+            replaceability_score INTEGER DEFAULT 70,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
+        )
+    """)
+
     # Column migrations for existing SQLite DB files
     for col_def in [
         "company_id INTEGER",
@@ -345,6 +368,56 @@ def init_db():
             expires_at       TEXT NOT NULL,
             last_activity_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+
+    # -----------------------------------------------------------------------
+    # Document Management (MVP)
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            vendor_id INTEGER NOT NULL,
+            uploader_id INTEGER NOT NULL,
+            document_type TEXT NOT NULL,
+            original_filename TEXT NOT NULL,
+            object_id TEXT NOT NULL UNIQUE,
+            size_bytes INTEGER NOT NULL,
+            upload_timestamp TEXT NOT NULL,
+            expiry_date TEXT,
+            wrapped_dek TEXT NOT NULL,
+            integrity_hash TEXT NOT NULL,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (uploader_id) REFERENCES users (id) ON DELETE SET NULL
+        )
+    """)
+
+    # -----------------------------------------------------------------------
+    # Alert Management (MVP)
+    # alert_type: HIGH_RISK_VENDOR | MAJOR_RISK_CHANGE | ASSESSMENT_OVERDUE |
+    #             CERTIFICATION_EXPIRING | CERTIFICATION_EXPIRED
+    # status lifecycle: UNREAD -> READ -> ACKNOWLEDGED
+    # dedup_key: unique business key to prevent duplicate alerts
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id      INTEGER NOT NULL,
+            vendor_id       INTEGER NOT NULL,
+            alert_type      TEXT NOT NULL,
+            severity        TEXT NOT NULL DEFAULT 'HIGH',
+            status          TEXT NOT NULL DEFAULT 'UNREAD',
+            title           TEXT NOT NULL,
+            message         TEXT NOT NULL,
+            metadata_json   TEXT NOT NULL DEFAULT '{}',
+            dedup_key       TEXT NOT NULL UNIQUE,
+            created_at      TEXT NOT NULL,
+            read_at         TEXT,
+            acknowledged_at TEXT,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
+            FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE
         )
     """)
 
@@ -807,3 +880,286 @@ def delete_sub_vendor(sub_id: int):
     conn.close()
     return True
 
+# Operational Risk Module Helpers
+def get_vendor_operational_risk(vendor_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM vendor_operational_risk WHERE vendor_id = ?", (vendor_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        now = datetime.utcnow().isoformat()
+        cursor.execute("""
+            INSERT INTO vendor_operational_risk (
+                vendor_id, sla_compliance_pct, monthly_downtime_hours, incident_frequency,
+                delivery_delays_count, quality_defect_rate_pct, support_response_time_hrs,
+                bcp_status, bcp_audit_score, dr_rto_hours, dr_rpo_hours, dr_testing_status,
+                dependency_level, replaceability_score, updated_at
+            ) VALUES (?, 99.5, 1.0, 1, 0, 0.2, 1.5, 'VERIFIED', 85, 4.0, 1.0, 'PASSED_Q2', 'MODERATE', 70, ?)
+        """, (vendor_id, now))
+        conn.commit()
+        cursor.execute("SELECT * FROM vendor_operational_risk WHERE vendor_id = ?", (vendor_id,))
+        row = cursor.fetchone()
+        
+    conn.close()
+    return dict(row) if row else {}
+
+def upsert_vendor_operational_risk(vendor_id: int, data: dict):
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    
+    cursor.execute("""
+        INSERT INTO vendor_operational_risk (
+            vendor_id, sla_compliance_pct, monthly_downtime_hours, incident_frequency,
+            delivery_delays_count, quality_defect_rate_pct, support_response_time_hrs,
+            bcp_status, bcp_audit_score, dr_rto_hours, dr_rpo_hours, dr_testing_status,
+            dependency_level, replaceability_score, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(vendor_id) DO UPDATE SET
+            sla_compliance_pct = excluded.sla_compliance_pct,
+            monthly_downtime_hours = excluded.monthly_downtime_hours,
+            incident_frequency = excluded.incident_frequency,
+            delivery_delays_count = excluded.delivery_delays_count,
+            quality_defect_rate_pct = excluded.quality_defect_rate_pct,
+            support_response_time_hrs = excluded.support_response_time_hrs,
+            bcp_status = excluded.bcp_status,
+            bcp_audit_score = excluded.bcp_audit_score,
+            dr_rto_hours = excluded.dr_rto_hours,
+            dr_rpo_hours = excluded.dr_rpo_hours,
+            dr_testing_status = excluded.dr_testing_status,
+            dependency_level = excluded.dependency_level,
+            replaceability_score = excluded.replaceability_score,
+            updated_at = excluded.updated_at
+    """, (
+        vendor_id,
+        data.get('sla_compliance_pct', 99.5),
+        data.get('monthly_downtime_hours', 1.0),
+        data.get('incident_frequency', 1),
+        data.get('delivery_delays_count', 0),
+        data.get('quality_defect_rate_pct', 0.2),
+        data.get('support_response_time_hrs', 1.5),
+        data.get('bcp_status', 'VERIFIED'),
+        data.get('bcp_audit_score', 85),
+        data.get('dr_rto_hours', 4.0),
+        data.get('dr_rpo_hours', 1.0),
+        data.get('dr_testing_status', 'PASSED_Q2'),
+        data.get('dependency_level', 'MODERATE'),
+        data.get('replaceability_score', 70),
+        now
+    ))
+    conn.commit()
+    conn.close()
+    return get_vendor_operational_risk(vendor_id)
+
+def get_operational_risk_summary():
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT
+            COUNT(v.id) as total_vendors,
+            AVG(COALESCE(o.sla_compliance_pct, 99.5)) as avg_sla_compliance,
+            SUM(COALESCE(o.monthly_downtime_hours, 1.0)) as total_downtime_hours,
+            SUM(COALESCE(o.delivery_delays_count, 0)) as total_delivery_delays,
+            AVG(COALESCE(o.support_response_time_hrs, 1.5)) as avg_support_mttr,
+            SUM(CASE WHEN o.dependency_level = 'HIGH_SINGLE_POINT' THEN 1 ELSE 0 END) as high_spof_count,
+            SUM(CASE WHEN o.bcp_status = 'VERIFIED' THEN 1 ELSE 0 END) as bcp_verified_count,
+            SUM(CASE WHEN o.dr_testing_status IN ('PASSED_Q1', 'PASSED_Q2', 'PASSED_Q3', 'PASSED_Q4') THEN 1 ELSE 0 END) as dr_passed_count
+        FROM vendors v
+        LEFT JOIN vendor_operational_risk o ON v.id = o.vendor_id
+    """)
+    row = cursor.fetchone()
+    conn.close()
+    
+    res = dict(row) if row else {}
+    total = res.get('total_vendors', 0) or 1
+    return {
+        "total_vendors": res.get('total_vendors', 0),
+        "avg_sla_compliance": round(res.get('avg_sla_compliance', 99.5) or 99.5, 2),
+        "total_downtime_hours": round(res.get('total_downtime_hours', 0.0) or 0.0, 1),
+        "total_delivery_delays": res.get('total_delivery_delays', 0) or 0,
+        "avg_support_mttr_hrs": round(res.get('avg_support_mttr', 1.5) or 1.5, 1),
+        "high_spof_dependency_count": res.get('high_spof_count', 0) or 0,
+        "bcp_verification_rate": round(((res.get('bcp_verified_count', 0) or 0) / total) * 100, 1),
+        "dr_test_pass_rate": round(((res.get('dr_passed_count', 0) or 0) / total) * 100, 1)
+    }
+
+# ---------------------------------------------------------------------------
+# Document Management
+# ---------------------------------------------------------------------------
+
+def add_document(company_id: int, vendor_id: int, uploader_id: int, document_type: str, original_filename: str, object_id: str, size_bytes: int, expiry_date: str, wrapped_dek: str, integrity_hash: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        INSERT INTO documents (
+            company_id, vendor_id, uploader_id, document_type, original_filename, object_id,
+            size_bytes, upload_timestamp, expiry_date, wrapped_dek, integrity_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (company_id, vendor_id, uploader_id, document_type, original_filename, object_id, size_bytes, now, expiry_date, wrapped_dek, integrity_hash))
+    conn.commit()
+    doc_id = cursor.lastrowid
+    conn.close()
+    return doc_id
+
+def get_vendor_documents(vendor_id: int, company_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT d.*, u.name as uploader_name, u.email as uploader_email
+        FROM documents d
+        LEFT JOIN users u ON d.uploader_id = u.id
+        WHERE d.vendor_id = ? AND d.company_id = ?
+        ORDER BY d.upload_timestamp DESC
+    """, (vendor_id, company_id))
+    docs = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return docs
+
+def get_document_by_id(document_id: int, company_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT d.*, v.name as vendor_name 
+        FROM documents d
+        LEFT JOIN vendors v ON d.vendor_id = v.id
+        WHERE d.id = ? AND d.company_id = ?
+    """, (document_id, company_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Alert Management CRUD
+# ---------------------------------------------------------------------------
+
+def create_alert(
+    company_id: int,
+    vendor_id: int,
+    alert_type: str,
+    severity: str,
+    title: str,
+    message: str,
+    dedup_key: str,
+    metadata_json: str = "{}",
+) -> int | None:
+    """
+    Insert a new alert. Returns the new alert id, or None if the dedup_key
+    already exists (duplicate suppression via UNIQUE constraint).
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    try:
+        cursor.execute("""
+            INSERT INTO alerts
+                (company_id, vendor_id, alert_type, severity, status, title, message,
+                 metadata_json, dedup_key, created_at)
+            VALUES (?, ?, ?, ?, 'UNREAD', ?, ?, ?, ?, ?)
+        """, (company_id, vendor_id, alert_type, severity, title, message,
+               metadata_json, dedup_key, now))
+        conn.commit()
+        alert_id = cursor.lastrowid
+        return alert_id
+    except Exception as e:
+        # UNIQUE constraint violation -> duplicate; silently suppress
+        if "UNIQUE" in str(e).upper():
+            return None
+        raise
+    finally:
+        conn.close()
+
+
+def get_alerts(
+    company_id: int,
+    vendor_id: int = None,
+    alert_type: str = None,
+    status: str = None,
+) -> list[dict]:
+    """Return alerts scoped to company_id with optional filters."""
+    conn = get_db()
+    cursor = conn.cursor()
+    query = """
+        SELECT a.*, v.name as vendor_name, v.domain as vendor_domain
+        FROM alerts a
+        LEFT JOIN vendors v ON a.vendor_id = v.id
+        WHERE a.company_id = ?
+    """
+    params: list = [company_id]
+    if vendor_id is not None:
+        query += " AND a.vendor_id = ?"
+        params.append(vendor_id)
+    if alert_type:
+        query += " AND a.alert_type = ?"
+        params.append(alert_type)
+    if status:
+        query += " AND a.status = ?"
+        params.append(status)
+    query += " ORDER BY a.created_at DESC"
+    cursor.execute(query, params)
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_alert_by_id(alert_id: int, company_id: int) -> dict | None:
+    """Fetch a single alert ensuring company isolation."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT a.*, v.name as vendor_name, v.domain as vendor_domain
+        FROM alerts a
+        LEFT JOIN vendors v ON a.vendor_id = v.id
+        WHERE a.id = ? AND a.company_id = ?
+    """, (alert_id, company_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def mark_alert_read(alert_id: int, company_id: int) -> bool:
+    """Transition UNREAD -> READ. Returns True on success."""
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        UPDATE alerts
+        SET status = 'READ', read_at = ?
+        WHERE id = ? AND company_id = ? AND status = 'UNREAD'
+    """, (now, alert_id, company_id))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def mark_alert_acknowledged(alert_id: int, company_id: int) -> bool:
+    """Transition READ -> ACKNOWLEDGED. Returns True on success."""
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        UPDATE alerts
+        SET status = 'ACKNOWLEDGED', acknowledged_at = ?
+        WHERE id = ? AND company_id = ? AND status IN ('UNREAD', 'READ')
+    """, (now, alert_id, company_id))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def get_unread_alert_count(company_id: int) -> int:
+    """Return count of UNREAD alerts for the header badge."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) as cnt FROM alerts WHERE company_id = ? AND status = 'UNREAD'",
+        (company_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row["cnt"] if row else 0

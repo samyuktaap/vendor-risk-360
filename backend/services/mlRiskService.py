@@ -1,7 +1,16 @@
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-import shap
+try:
+    import numpy as np
+    import pandas as pd
+    from sklearn.ensemble import RandomForestRegressor
+    import shap
+    HAS_ML_DEPS = True
+except ImportError:
+    HAS_ML_DEPS = False
+    np = None
+    pd = None
+    RandomForestRegressor = None
+    shap = None
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,6 +45,8 @@ _explainer = None
 
 def _initialize_ml_model():
     global _model, _explainer
+    if not HAS_ML_DEPS:
+        return
     if _model is not None:
         return
 
@@ -86,7 +97,7 @@ def _initialize_ml_model():
     except Exception as e:
         logger.error(f"Error initializing ML SHAP model: {e}", exc_info=True)
 
-def _extract_feature_vector(vendor: dict) -> np.ndarray:
+def _extract_feature_vector(vendor: dict):
     tier_map = {
         'Tier 1 - Mission Critical': 1,
         'Tier 2 - Business Operational': 2,
@@ -126,6 +137,16 @@ def calculate_shap_vendor_risk(vendor: dict) -> dict:
     """
     Predicts vendor risk score using Scikit-Learn RandomForest and returns SHAP feature explanations.
     """
+    if not HAS_ML_DEPS:
+        return {
+            "status": "disabled",
+            "message": "SHAP / scikit-learn ML dependencies not installed",
+            "ml_predicted_score": vendor.get("risk_score", 30),
+            "baseline_portfolio_risk": 30.0,
+            "top_risk_drivers": [],
+            "protective_factors": [],
+            "all_shap_values": []
+        }
     _initialize_ml_model()
     if _model is None or _explainer is None:
         return {"status": "error", "message": "ML model unavailable"}

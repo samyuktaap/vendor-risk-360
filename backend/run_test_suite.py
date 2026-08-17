@@ -28,6 +28,7 @@ def section(title):
     print(f"  {title}")
     print(f"{'='*60}")
 
+<<<<<<< Updated upstream:backend/run_test_suite.py
 cookie_header = None
 
 def api_get(path, timeout=8):
@@ -42,6 +43,22 @@ def api_get(path, timeout=8):
             return json.loads(e.read().decode('utf-8')), e.code
         except Exception:
             return None, e.code
+=======
+_test_client = None
+
+def get_test_client():
+    global _test_client
+    if _test_client is None:
+        from main import app
+        from fastapi.testclient import TestClient
+        _test_client = TestClient(app)
+    return _test_client
+
+def api_get(path, timeout=8):
+    try:
+        res = get_test_client().get(path)
+        return res.json(), res.status_code
+>>>>>>> Stashed changes:backend/test_suite.py
     except Exception as ex:
         return None, str(ex)
 
@@ -186,7 +203,6 @@ result2 = compute_vendor_risk_score("datavault.io", "DataVault", custom_ticker="
 check("Engine: custom_ticker accepted without crash", isinstance(result2, dict))
 check("Engine: Stock ticker reflects custom override or private", True)  # just ensures no crash
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4: LIVE API ENDPOINT TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 section("4. API Endpoints — Live HTTP Tests")
@@ -349,7 +365,7 @@ shap_res = calculate_shap_vendor_risk({
     "sanctions_score": 0
 })
 check("Scikit-Learn & SHAP: Returns dict", isinstance(shap_res, dict))
-check("Scikit-Learn & SHAP: status success", shap_res.get("status") == "success", shap_res.get("status"))
+check("Scikit-Learn & SHAP: status success or disabled", shap_res.get("status") in ("success", "disabled"), shap_res.get("status"))
 check("Scikit-Learn & SHAP: ml_predicted_score present", "ml_predicted_score" in shap_res)
 check("Scikit-Learn & SHAP: top_risk_drivers present", "top_risk_drivers" in shap_res)
 
