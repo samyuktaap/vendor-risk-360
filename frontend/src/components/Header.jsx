@@ -23,9 +23,10 @@ export default function Header({
   currentUser,
   onOpenAuth,
   onSignOut,
-  onOpenVoiceDemo
+  onOpenVoiceDemo,
+  unreadAlertCount = 0,
+  onOpenAlerts
 }) {
-  const [showNotifications, setShowNotifications] = useState(false);
   const criticalCount = criticalVendors.length;
 
   return (
@@ -77,66 +78,21 @@ export default function Header({
           <span>LIVE API RADAR ACTIVE</span>
         </div>
 
-        {/* Notifications Dropdown */}
+        {/* Notifications Dropdown / Alerts Button */}
         <div className="relative">
           <button
-            onClick={() => setShowNotifications(!showNotifications)}
+            onClick={() => {
+              if (onOpenAlerts) onOpenAlerts();
+            }}
             className="relative p-2 rounded-xl bg-[#070a12] border border-emerald-900/30 hover:bg-slate-800 text-slate-300 transition-colors"
           >
             <Bell className="w-4 h-4 text-slate-300" />
-            {criticalCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
-                {criticalCount}
+            {unreadAlertCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+                {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
               </span>
             )}
           </button>
-
-          {showNotifications && (
-            <div className="absolute right-0 mt-2 w-80 bg-[#0a0f1d] border border-emerald-900/40 rounded-xl shadow-2xl z-50 p-4">
-              <div className="flex items-center justify-between pb-2 border-b border-emerald-900/30">
-                <span className="font-semibold text-xs text-slate-200 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-                  Security Risk Alerts ({criticalCount})
-                </span>
-                <button
-                  onClick={() => setShowNotifications(false)}
-                  className="text-slate-400 hover:text-slate-200 text-xs"
-                >
-                  Close
-                </button>
-              </div>
-
-              <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
-                {criticalCount === 0 ? (
-                  <div className="text-center py-4 text-xs text-slate-400 flex flex-col items-center gap-1">
-                    <ShieldCheck className="w-6 h-6 text-[#00f090]" />
-                    <span>No critical security alerts triggered.</span>
-                  </div>
-                ) : (
-                  criticalVendors.map((v) => (
-                    <div
-                      key={v.id}
-                      onClick={() => {
-                        onSelectVendor(v.id);
-                        setShowNotifications(false);
-                      }}
-                      className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-500/30 hover:bg-rose-900/40 cursor-pointer transition-colors flex items-center justify-between"
-                    >
-                      <div>
-                        <div className="font-semibold text-xs text-rose-200">{v.name}</div>
-                        <div className="text-[10px] text-slate-400">{v.sector}</div>
-                      </div>
-                      <div className="text-right">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500 text-white">
-                          Score {v.risk_score}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* User Account / Auth Profile Button */}

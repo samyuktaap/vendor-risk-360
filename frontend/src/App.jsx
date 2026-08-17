@@ -12,6 +12,8 @@ import IncidentManager from './components/IncidentManager';
 import ComplianceManager from './components/ComplianceManager';
 import RemediationManager from './components/RemediationManager';
 import DocumentManager from './components/DocumentManager';
+import OperationalRiskManager from './components/OperationalRiskManager';
+import AlertManager from './components/AlertManager';
 import AuthModal from './components/AuthModal';
 import VendorSelfServicePortal from './components/VendorSelfServicePortal';
 import VoiceGuidedDemoModal from './components/VoiceGuidedDemoModal';
@@ -29,6 +31,7 @@ export default function App() {
   const [isVoiceDemoOpen, setIsVoiceDemoOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [unreadAlertCount, setUnreadAlertCount] = useState(0);
 
   // Active User Authentication State
   const [currentUser, setCurrentUser] = useState(null);
@@ -61,6 +64,19 @@ export default function App() {
   const handleLogin = (user) => {
     setCurrentUser(user);
     fetchAllData();
+    fetchAlertCount();
+  };
+
+  const fetchAlertCount = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/alerts/count`);
+      if (res.ok) {
+        const data = await res.json();
+        setUnreadAlertCount(data.unread || 0);
+      }
+    } catch (e) {
+      // silent - header badge is non-critical
+    }
   };
 
   const handleSignOut = async () => {
@@ -87,6 +103,8 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+    // Refresh alert count silently
+    fetchAlertCount();
   };
 
   const criticalVendors = vendors.filter(v => v.risk_score >= 70);
@@ -137,10 +155,15 @@ export default function App() {
       {/* Navigation Sidebar */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => {
+          setActiveTab(tab);
+          // Refresh alert count when navigating to alerts tab
+          if (tab === 'alerts') fetchAlertCount();
+        }}
         onOpenAddModal={() => setIsAddModalOpen(true)}
         criticalCount={criticalVendors.length}
         activeIncidentsCount={activeIncidentsCount}
+        unreadAlertCount={unreadAlertCount}
       />
 
       {/* Main Container */}
@@ -155,6 +178,8 @@ export default function App() {
           onOpenAuth={() => setIsAuthModalOpen(true)}
           onSignOut={handleSignOut}
           onOpenVoiceDemo={() => setIsVoiceDemoOpen(true)}
+          unreadAlertCount={unreadAlertCount}
+          onOpenAlerts={() => setActiveTab('alerts')}
         />
 
         {/* View Content */}
@@ -197,10 +222,20 @@ export default function App() {
                 />
               )}
 
+              {activeTab === 'operational-risk' && (
+                <OperationalRiskManager
+                  vendors={vendors}
+                />
+              )}
+
               {activeTab === 'documents' && (
                 <DocumentManager
                   vendors={vendors}
                 />
+              )}
+
+              {activeTab === 'alerts' && (
+                <AlertManager />
               )}
 
               {activeTab === 'contagion' && (

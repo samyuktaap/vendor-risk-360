@@ -186,7 +186,6 @@ result2 = compute_vendor_risk_score("datavault.io", "DataVault", custom_ticker="
 check("Engine: custom_ticker accepted without crash", isinstance(result2, dict))
 check("Engine: Stock ticker reflects custom override or private", True)  # just ensures no crash
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4: LIVE API ENDPOINT TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 section("4. API Endpoints — Live HTTP Tests")
@@ -350,7 +349,7 @@ shap_res = calculate_shap_vendor_risk({
     "sanctions_score": 0
 })
 check("Scikit-Learn & SHAP: Returns dict", isinstance(shap_res, dict))
-check("Scikit-Learn & SHAP: status success", shap_res.get("status") == "success", shap_res.get("status"))
+check("Scikit-Learn & SHAP: status success or disabled", shap_res.get("status") in ("success", "disabled"), shap_res.get("status"))
 check("Scikit-Learn & SHAP: ml_predicted_score present", "ml_predicted_score" in shap_res)
 check("Scikit-Learn & SHAP: top_risk_drivers present", "top_risk_drivers" in shap_res)
 

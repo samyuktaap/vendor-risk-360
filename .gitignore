@@ -15,6 +15,8 @@ backend/vault_test_creds.env
 *.sqlite
 *.sqlite3
 backend/vendor_risk.db
+backend/storage/documents/*.enc
+backend/storage/*.enc
 
 # Python Caches & Environments
 __pycache__/
