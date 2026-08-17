@@ -122,6 +122,13 @@ class AuditAction(str, Enum):
     VENDOR_TIER_OVERRIDE             = "VENDOR_TIER_OVERRIDE"
     RISK_TREND_VIEWED                = "RISK_TREND_VIEWED"
     RISK_ACCESS_DENIED               = "RISK_ACCESS_DENIED"
+    # Fourth-Party / Supply Chain Risk Management
+    DEPENDENCY_CREATED               = "DEPENDENCY_CREATED"
+    DEPENDENCY_UPDATED               = "DEPENDENCY_UPDATED"
+    DEPENDENCY_DELETED               = "DEPENDENCY_DELETED"
+    SUPPLY_CHAIN_VIEWED              = "SUPPLY_CHAIN_VIEWED"
+    SUPPLY_CHAIN_IMPACT_VIEWED       = "SUPPLY_CHAIN_IMPACT_VIEWED"
+    DEPENDENCY_ACCESS_DENIED         = "DEPENDENCY_ACCESS_DENIED"
 
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,13 @@ from database import (
     override_vendor_tier,
     record_vendor_risk_history,
     get_vendor_risk_history,
+    create_vendor_dependency,
+    get_dependency_by_id,
+    get_vendor_dependencies,
+    update_vendor_dependency,
+    delete_vendor_dependency,
+    get_all_company_dependencies,
+    add_alert,
     COMPLIANCE_FRAMEWORKS
 )
 from seed_data import seed_database
@@ -54,6 +61,15 @@ from services.vendor_tiering_service import (
     calculate_risk_trend,
     VALID_TIERS,
     TIERING_VERSION
+)
+from services.supply_chain_service import (
+    validate_dependency_integrity,
+    build_supply_chain_graph,
+    calculate_downstream_impact,
+    VALID_RELATIONSHIP_TYPES,
+    VALID_CRITICALITY_LEVELS,
+    VALID_DEPENDENCY_LEVELS,
+    VALID_STATUSES as VALID_DEPENDENCY_STATUSES
 )
 from services.audit_log_service import get_audit_log, AuditAction
 
@@ -76,6 +92,26 @@ class EvidenceReviewRequest(BaseModel):
 class TierOverrideRequest(BaseModel):
     tier: str = Field(..., description="Override tier: TIER_1_CRITICAL, TIER_2_HIGH, TIER_3_MEDIUM, TIER_4_LOW", example="TIER_1_CRITICAL")
     reason: str = Field(..., description="Justification reason for manual tier override", example="Designated as critical banking partner by executive leadership.")
+
+class DependencyCreateRequest(BaseModel):
+    downstream_vendor_id: Optional[int] = Field(default=None, description="ID of registered downstream vendor")
+    external_vendor_name: Optional[str] = Field(default=None, description="Name of external provider")
+    external_vendor_domain: Optional[str] = Field(default=None, description="Domain of external provider")
+    relationship_type: str = Field(..., description="Relationship type", example="CLOUD_PROVIDER")
+    criticality: str = Field(default="MEDIUM", description="CRITICAL, HIGH, MEDIUM, LOW", example="HIGH")
+    dependency_level: str = Field(default="MEDIUM", description="CRITICAL, HIGH, MEDIUM, LOW", example="CRITICAL")
+    status: str = Field(default="ACTIVE", description="ACTIVE, INACTIVE, UNDER_REVIEW", example="ACTIVE")
+    description: Optional[str] = Field(default=None, description="Description of the supply chain dependency")
+
+class DependencyUpdateRequest(BaseModel):
+    downstream_vendor_id: Optional[int] = None
+    external_vendor_name: Optional[str] = None
+    external_vendor_domain: Optional[str] = None
+    relationship_type: Optional[str] = None
+    criticality: Optional[str] = None
+    dependency_level: Optional[str] = None
+    status: Optional[str] = None
+    description: Optional[str] = None
 
 class VulnerabilityStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="New vulnerability status", example="IN_PROGRESS")
@@ -2277,12 +2313,373 @@ def get_vendor_risk_trend_endpoint(vendor_id: int, request: Request, session = D
     
     return trend_result
 
+# ---------------------------------------------------------------------------
+# Fourth-Party / Supply Chain Risk Management Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/vendors/{vendor_id}/dependencies")
+def get_vendor_dependencies_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.DEPENDENCY_ACCESS_DENIED,
+            resource=f"vendor:{vendor_id}:dependencies",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Vendor ownership verification failed"}
+        )
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+    db.close()
+    
+    if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
+        raise HTTPException(status_code=403, detail="Unauthorized: Vendor users can only view their own dependencies")
+        
+    deps_data = get_vendor_dependencies(vendor_id, user_company_id)
+    
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.SUPPLY_CHAIN_VIEWED,
+        resource=f"vendor:{vendor_id}:dependencies",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"direct_count": len(deps_data["direct_dependencies"]), "dependent_count": len(deps_data["dependent_vendors"])}
+    )
+    
+    return deps_data
+
+
+@app.post("/api/vendors/{vendor_id}/dependencies")
+def create_vendor_dependency_endpoint(
+    vendor_id: int,
+    payload: DependencyCreateRequest,
+    request: Request,
+    session = Depends(get_current_session)
+):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    user_role = session.get("role", "")
+    if user_role not in ("ENTERPRISE_ADMIN", "CISO", "ANALYST"):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.DEPENDENCY_ACCESS_DENIED,
+            resource=f"vendor:{vendor_id}:dependencies",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Creating dependencies requires admin, ciso, or analyst role"}
+        )
+        raise HTTPException(status_code=403, detail="Unauthorized: Creating supply chain dependencies requires analyst or admin role")
+        
+    rel_type_upper = payload.relationship_type.upper()
+    if rel_type_upper not in VALID_RELATIONSHIP_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid relationship_type '{payload.relationship_type}'. Must be one of {sorted(list(VALID_RELATIONSHIP_TYPES))}")
+        
+    crit_upper = payload.criticality.upper()
+    if crit_upper not in VALID_CRITICALITY_LEVELS:
+        raise HTTPException(status_code=400, detail=f"Invalid criticality '{payload.criticality}'. Must be one of {sorted(list(VALID_CRITICALITY_LEVELS))}")
+        
+    dep_level_upper = payload.dependency_level.upper()
+    if dep_level_upper not in VALID_DEPENDENCY_LEVELS:
+        raise HTTPException(status_code=400, detail=f"Invalid dependency_level '{payload.dependency_level}'. Must be one of {sorted(list(VALID_DEPENDENCY_LEVELS))}")
+        
+    status_upper = payload.status.upper()
+    if status_upper not in VALID_DEPENDENCY_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{payload.status}'. Must be one of {sorted(list(VALID_DEPENDENCY_STATUSES))}")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+        
+    try:
+        validate_dependency_integrity(
+            upstream_vendor_id=vendor_id,
+            downstream_vendor_id=payload.downstream_vendor_id,
+            external_vendor_name=payload.external_vendor_name,
+            relationship_type=rel_type_upper,
+            company_id=user_company_id,
+            db_conn=db
+        )
+    except ValueError as e:
+        db.close()
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    db.close()
+    
+    new_dep = create_vendor_dependency(
+        company_id=user_company_id,
+        upstream_vendor_id=vendor_id,
+        downstream_vendor_id=payload.downstream_vendor_id,
+        external_vendor_name=payload.external_vendor_name.strip() if payload.external_vendor_name else None,
+        external_vendor_domain=payload.external_vendor_domain.strip() if payload.external_vendor_domain else None,
+        relationship_type=rel_type_upper,
+        criticality=crit_upper,
+        dependency_level=dep_level_upper,
+        status=status_upper,
+        description=payload.description.strip() if payload.description else None,
+        created_by=session["email"]
+    )
+    
+    # Alert Trigger if Critical Dependency Added
+    if crit_upper == "CRITICAL" or dep_level_upper == "CRITICAL":
+        target_name = new_dep.get("downstream_vendor_name") or new_dep.get("external_vendor_name") or "Downstream Entity"
+        add_alert(
+            company_id=user_company_id,
+            vendor_id=vendor_id,
+            alert_type="CRITICAL_DEPENDENCY_ADDED",
+            severity="HIGH",
+            title=f"Critical Supply Chain Dependency Added: {target_name}",
+            description=f"A critical {rel_type_upper} dependency on '{target_name}' was registered for this vendor."
+        )
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.DEPENDENCY_CREATED,
+        resource=f"dependency:{new_dep['id']}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"upstream_id": vendor_id, "downstream_id": payload.downstream_vendor_id, "relationship_type": rel_type_upper}
+    )
+    
+    return new_dep
+
+
+@app.put("/api/dependencies/{dependency_id}")
+def update_vendor_dependency_endpoint(
+    dependency_id: int,
+    payload: DependencyUpdateRequest,
+    request: Request,
+    session = Depends(get_current_session)
+):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    user_role = session.get("role", "")
+    if user_role not in ("ENTERPRISE_ADMIN", "CISO", "ANALYST"):
+        raise HTTPException(status_code=403, detail="Unauthorized: Updating dependencies requires analyst or admin role")
+        
+    existing = get_dependency_by_id(dependency_id, user_company_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Dependency relationship not found")
+        
+    updates = {}
+    if payload.relationship_type:
+        rel_upper = payload.relationship_type.upper()
+        if rel_upper not in VALID_RELATIONSHIP_TYPES:
+            raise HTTPException(status_code=400, detail=f"Invalid relationship_type '{payload.relationship_type}'")
+        updates["relationship_type"] = rel_upper
+        
+    if payload.criticality:
+        crit_upper = payload.criticality.upper()
+        if crit_upper not in VALID_CRITICALITY_LEVELS:
+            raise HTTPException(status_code=400, detail=f"Invalid criticality '{payload.criticality}'")
+        updates["criticality"] = crit_upper
+        
+    if payload.dependency_level:
+        dep_upper = payload.dependency_level.upper()
+        if dep_upper not in VALID_DEPENDENCY_LEVELS:
+            raise HTTPException(status_code=400, detail=f"Invalid dependency_level '{payload.dependency_level}'")
+        updates["dependency_level"] = dep_upper
+        
+    if payload.status:
+        st_upper = payload.status.upper()
+        if st_upper not in VALID_DEPENDENCY_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Invalid status '{payload.status}'")
+        updates["status"] = st_upper
+        
+    if payload.description is not None:
+        updates["description"] = payload.description.strip()
+        
+    if payload.external_vendor_name is not None:
+        updates["external_vendor_name"] = payload.external_vendor_name.strip()
+    if payload.external_vendor_domain is not None:
+        updates["external_vendor_domain"] = payload.external_vendor_domain.strip()
+        
+    if payload.downstream_vendor_id is not None or "relationship_type" in updates:
+        check_downstream = payload.downstream_vendor_id if payload.downstream_vendor_id is not None else existing["downstream_vendor_id"]
+        check_rel = updates.get("relationship_type", existing["relationship_type"])
+        check_ext = updates.get("external_vendor_name", existing["external_vendor_name"])
+        db = get_db()
+        try:
+            validate_dependency_integrity(
+                upstream_vendor_id=existing["upstream_vendor_id"],
+                downstream_vendor_id=check_downstream,
+                external_vendor_name=check_ext,
+                relationship_type=check_rel,
+                company_id=user_company_id,
+                db_conn=db,
+                current_dependency_id=dependency_id
+            )
+        except ValueError as e:
+            db.close()
+            raise HTTPException(status_code=400, detail=str(e))
+        db.close()
+        if payload.downstream_vendor_id is not None:
+            updates["downstream_vendor_id"] = payload.downstream_vendor_id
+            
+    updated_dep = update_vendor_dependency(dependency_id, user_company_id, updates)
+    
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.DEPENDENCY_UPDATED,
+        resource=f"dependency:{dependency_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"updated_fields": list(updates.keys())}
+    )
+    
+    return updated_dep
+
+
+@app.delete("/api/dependencies/{dependency_id}")
+def delete_vendor_dependency_endpoint(dependency_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    user_role = session.get("role", "")
+    if user_role not in ("ENTERPRISE_ADMIN", "CISO"):
+        audit = get_audit_log()
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        audit.record(
+            action=AuditAction.DEPENDENCY_ACCESS_DENIED,
+            resource=f"dependency:{dependency_id}",
+            actor_id=session["user_id"],
+            actor_email=session["email"],
+            actor_role=session["role"],
+            ip_address=client_ip,
+            session_id=session["session_id"],
+            details={"reason": "Deleting dependencies requires admin or ciso role"}
+        )
+        raise HTTPException(status_code=403, detail="Unauthorized: Deleting dependencies requires ENTERPRISE_ADMIN or CISO role")
+        
+    existing = get_dependency_by_id(dependency_id, user_company_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Dependency not found or access denied")
+        
+    deleted = delete_vendor_dependency(dependency_id, user_company_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Dependency not found")
+        
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.DEPENDENCY_DELETED,
+        resource=f"dependency:{dependency_id}",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"upstream_id": existing["upstream_vendor_id"], "downstream_id": existing.get("downstream_vendor_id")}
+    )
+    
+    return {"status": "success", "message": "Dependency relationship deleted successfully"}
+
+
+@app.get("/api/supply-chain/graph")
+def get_supply_chain_graph_endpoint(vendor_id: Optional[int] = None, request: Request = None, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if vendor_id is not None:
+        if not verify_vendor_ownership(vendor_id, session, db):
+            db.close()
+            raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+            
+    if session["role"] == "VENDOR_USER":
+        # Force to their assigned vendor only
+        vendor_id = session.get("vendor_id")
+        
+    graph_data = build_supply_chain_graph(user_company_id, db, vendor_id)
+    db.close()
+    
+    audit = get_audit_log()
+    client_ip = request.client.host if request and request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.SUPPLY_CHAIN_VIEWED,
+        resource="supply-chain:graph",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"total_nodes": graph_data["total_nodes"], "total_edges": graph_data["total_edges"]}
+    )
+    
+    return graph_data
+
+
+@app.get("/api/supply-chain/impact/{vendor_id}")
+def get_supply_chain_impact_endpoint(vendor_id: int, request: Request, session = Depends(get_current_session)):
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+        
+    db = get_db()
+    if not verify_vendor_ownership(vendor_id, session, db):
+        db.close()
+        raise HTTPException(status_code=404, detail="Vendor not found or access denied")
+        
+    if session["role"] == "VENDOR_USER" and session.get("vendor_id") != vendor_id:
+        db.close()
+        raise HTTPException(status_code=403, detail="Unauthorized: Vendor users can only view their own impact analysis")
+        
+    impact_data = calculate_downstream_impact(vendor_id, user_company_id, db)
+    db.close()
+    
+    audit = get_audit_log()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    audit.record(
+        action=AuditAction.SUPPLY_CHAIN_IMPACT_VIEWED,
+        resource=f"vendor:{vendor_id}:supply-chain-impact",
+        actor_id=session["user_id"],
+        actor_email=session["email"],
+        actor_role=session["role"],
+        ip_address=client_ip,
+        session_id=session["session_id"],
+        details={"impacted_upstream_count": impact_data["impacted_upstream_count"], "direct_downstream_count": impact_data["direct_downstream_count"]}
+    )
+    
+    return impact_data
+
 # --- End Vendor Risk Scoring Endpoints ---
 
 if __name__ == "__main__":
     import uvicorn
     # Enforce workers=1 (Priority 3: SQLite multi-process safety)
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, workers=1)
+
 
 
 

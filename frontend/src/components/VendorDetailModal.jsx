@@ -36,6 +36,7 @@ import RiskQuestionnaire from './RiskQuestionnaire';
 import CybersecurityAssessment from './CybersecurityAssessment';
 import VulnerabilityManagement from './VulnerabilityManagement';
 import VendorTieringTrend from './VendorTieringTrend';
+import SupplyChainRisk from './SupplyChainRisk';
 
 export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, currentUser }) {
   const [data, setData] = useState(null);
@@ -611,6 +612,17 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, 
                 Vulnerability Management
               </button>
               <button
+                onClick={() => setActiveTab('supplychain')}
+                className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
+                  activeTab === 'supplychain'
+                    ? 'border-cyan-400 text-cyan-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Network className="w-3.5 h-3.5 text-cyan-400" />
+                Supply Chain & 4th-Party
+              </button>
+              <button
                 onClick={() => setActiveTab('assessment')}
                 className={`pb-2 transition-colors border-b-2 flex items-center gap-1.5 ${
                   activeTab === 'assessment'
@@ -758,6 +770,14 @@ export default function VendorDetailModal({ vendorId, onClose, onRefreshVendor, 
             {/* TAB CONTENT: VULNERABILITY MANAGEMENT */}
             {activeTab === 'vulnerabilities' && (
               <VulnerabilityManagement 
+                vendorId={vendorId} 
+                userRole={currentUser?.role} 
+              />
+            )}
+
+            {/* TAB CONTENT: SUPPLY CHAIN & 4TH-PARTY RISK */}
+            {activeTab === 'supplychain' && (
+              <SupplyChainRisk 
                 vendorId={vendorId} 
                 userRole={currentUser?.role} 
               />

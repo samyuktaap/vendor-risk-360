@@ -475,6 +475,29 @@ def init_db():
         )
     """)
 
+    # Vendor Dependencies Table (Multi-Tier Supply Chain Graph)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS vendor_dependencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            upstream_vendor_id INTEGER NOT NULL,
+            downstream_vendor_id INTEGER,
+            external_vendor_name TEXT,
+            external_vendor_domain TEXT,
+            relationship_type TEXT NOT NULL,
+            criticality TEXT NOT NULL DEFAULT 'MEDIUM',
+            dependency_level TEXT NOT NULL DEFAULT 'MEDIUM',
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+            description TEXT,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (upstream_vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
+            FOREIGN KEY (downstream_vendor_id) REFERENCES vendors (id) ON DELETE SET NULL,
+            FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
+        )
+    """)
+
     # Add company_id to users if it doesn't exist
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN company_id INTEGER")
@@ -1513,6 +1536,200 @@ def get_vendor_risk_history(vendor_id: int, company_id: int, score_type: str = N
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+# ---------------------------------------------------------------------------
+# Fourth-Party / Supply Chain Risk Management DB Helpers
+# ---------------------------------------------------------------------------
+
+def create_vendor_dependency(
+    company_id: int,
+    upstream_vendor_id: int,
+    downstream_vendor_id: int | None,
+    external_vendor_name: str | None,
+    external_vendor_domain: str | None,
+    relationship_type: str,
+    criticality: str = "MEDIUM",
+    dependency_level: str = "MEDIUM",
+    status: str = "ACTIVE",
+    description: str | None = None,
+    created_by: str | None = None
+) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        INSERT INTO vendor_dependencies (
+            company_id, upstream_vendor_id, downstream_vendor_id,
+            external_vendor_name, external_vendor_domain,
+            relationship_type, criticality, dependency_level,
+            status, description, created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        company_id, upstream_vendor_id, downstream_vendor_id,
+        external_vendor_name, external_vendor_domain,
+        relationship_type, criticality, dependency_level,
+        status, description, created_by, now, now
+    ))
+    dep_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return get_dependency_by_id(dep_id, company_id)
+
+def get_dependency_by_id(dependency_id: int, company_id: int) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            d.*,
+            u.name as upstream_vendor_name,
+            u.domain as upstream_vendor_domain,
+            u.risk_score as upstream_risk_score,
+            u.effective_tier as upstream_tier,
+            w.name as downstream_vendor_name,
+            w.domain as downstream_vendor_domain,
+            w.risk_score as downstream_risk_score,
+            w.effective_tier as downstream_tier
+        FROM vendor_dependencies d
+        JOIN vendors u ON d.upstream_vendor_id = u.id
+        LEFT JOIN vendors w ON d.downstream_vendor_id = w.id
+        WHERE d.id = ? AND d.company_id = ?
+    """, (dependency_id, company_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_vendor_dependencies(vendor_id: int, company_id: int) -> dict:
+    """Returns direct dependencies (vendor is upstream) and dependent vendors (vendor is downstream)."""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # 1. Direct dependencies: vendor -> downstream
+    cursor.execute("""
+        SELECT 
+            d.*,
+            u.name as upstream_vendor_name,
+            u.domain as upstream_vendor_domain,
+            w.name as downstream_vendor_name,
+            w.domain as downstream_vendor_domain,
+            w.risk_score as downstream_risk_score,
+            w.effective_tier as downstream_tier
+        FROM vendor_dependencies d
+        JOIN vendors u ON d.upstream_vendor_id = u.id
+        LEFT JOIN vendors w ON d.downstream_vendor_id = w.id
+        WHERE d.upstream_vendor_id = ? AND d.company_id = ?
+        ORDER BY d.created_at DESC
+    """, (vendor_id, company_id))
+    direct_rows = cursor.fetchall()
+    
+    # 2. Dependent vendors: upstream -> vendor
+    cursor.execute("""
+        SELECT 
+            d.*,
+            u.name as upstream_vendor_name,
+            u.domain as upstream_vendor_domain,
+            u.risk_score as upstream_risk_score,
+            u.effective_tier as upstream_tier,
+            w.name as downstream_vendor_name,
+            w.domain as downstream_vendor_domain
+        FROM vendor_dependencies d
+        JOIN vendors u ON d.upstream_vendor_id = u.id
+        LEFT JOIN vendors w ON d.downstream_vendor_id = w.id
+        WHERE d.downstream_vendor_id = ? AND d.company_id = ?
+        ORDER BY d.created_at DESC
+    """, (vendor_id, company_id))
+    dependent_rows = cursor.fetchall()
+    conn.close()
+    
+    return {
+        "vendor_id": vendor_id,
+        "direct_dependencies": [dict(r) for r in direct_rows],
+        "dependent_vendors": [dict(r) for r in dependent_rows]
+    }
+
+def update_vendor_dependency(dependency_id: int, company_id: int, updates: dict) -> dict | None:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM vendor_dependencies WHERE id = ? AND company_id = ?", (dependency_id, company_id))
+    if not cursor.fetchone():
+        conn.close()
+        return None
+        
+    allowed_fields = [
+        "downstream_vendor_id", "external_vendor_name", "external_vendor_domain",
+        "relationship_type", "criticality", "dependency_level", "status", "description"
+    ]
+    set_clauses = []
+    params = []
+    
+    for f in allowed_fields:
+        if f in updates and updates[f] is not None:
+            set_clauses.append(f"{f} = ?")
+            params.append(updates[f])
+            
+    if not set_clauses:
+        conn.close()
+        return get_dependency_by_id(dependency_id, company_id)
+        
+    set_clauses.append("updated_at = ?")
+    params.append(datetime.utcnow().isoformat())
+    params.extend([dependency_id, company_id])
+    
+    cursor.execute(f"""
+        UPDATE vendor_dependencies
+        SET {', '.join(set_clauses)}
+        WHERE id = ? AND company_id = ?
+    """, tuple(params))
+    conn.commit()
+    conn.close()
+    return get_dependency_by_id(dependency_id, company_id)
+
+def delete_vendor_dependency(dependency_id: int, company_id: int) -> bool:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM vendor_dependencies WHERE id = ? AND company_id = ?", (dependency_id, company_id))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+def get_all_company_dependencies(company_id: int) -> list:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            d.*,
+            u.name as upstream_vendor_name,
+            u.domain as upstream_vendor_domain,
+            u.risk_score as upstream_risk_score,
+            u.effective_tier as upstream_tier,
+            w.name as downstream_vendor_name,
+            w.domain as downstream_vendor_domain,
+            w.risk_score as downstream_risk_score,
+            w.effective_tier as downstream_tier
+        FROM vendor_dependencies d
+        JOIN vendors u ON d.upstream_vendor_id = u.id
+        LEFT JOIN vendors w ON d.downstream_vendor_id = w.id
+        WHERE d.company_id = ?
+        ORDER BY d.created_at ASC
+    """, (company_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def add_alert(company_id: int, vendor_id: int, alert_type: str, severity: str, title: str, description: str = None) -> int:
+    conn = get_db()
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute("""
+        INSERT INTO alerts (company_id, vendor_id, alert_type, severity, title, description, created_at, is_read)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+    """, (company_id, vendor_id, alert_type, severity, title, description, now))
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
 
 
 
