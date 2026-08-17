@@ -60,61 +60,170 @@ The application implements a zero-cost, self-hosted, enterprise-grade security s
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Installation & Setup Guide
 
-### 1. HashiCorp Vault Setup (Local Dev Mode)
+### 📋 Prerequisites
+
+Before running VendorRisk 360, ensure you have the following installed on your machine:
+- **Python 3.10+** (Python 3.12 recommended)
+- **Node.js 18+** & **npm 9+**
+- **Git**
+- *(Optional for KMS Transit Key Management)*: **HashiCorp Vault OSS** binary ([Download Vault](https://developer.hashicorp.com/vault/install))
+
+---
+
+### ⚙️ 1. Environment Configuration
+
+1. In the `backend/` directory, create a `.env` file from `.env.example`:
+   ```bash
+   cd backend
+   cp .env.example .env
+   ```
+
+2. Configure environment variables in `backend/.env`:
+   ```ini
+   # --- Server Configuration ---
+   HOST=0.0.0.0
+   PORT=8000
+   WORKERS=1
+
+   # --- Security & Cryptography ---
+   AUDIT_HMAC_KEY=your-secure-random-hmac-checkpoint-key-32bytes
+   GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+
+   # --- Optional HashiCorp Vault Integration ---
+   VAULT_ADDR=http://127.0.0.1:8200
+   VAULT_TOKEN=my-root-token
+   VAULT_ROLE_ID=
+   VAULT_SECRET_ID=
+
+   # --- Optional Live Feeds API Keys (Leave blank to use live free feeds) ---
+   ABUSEIPDB_API_KEY=
+   HIBP_API_KEY=
+   ```
+
+---
+
+### 🔐 2. HashiCorp Vault Setup (Local Dev Mode)
+
+VendorRisk 360 supports hardware/KMS envelope encryption and key derivation via HashiCorp Vault. If running with Vault:
+
 ```bash
-# 1. Start Vault dev server in the background
+# Terminal 1: Start Vault in development mode
 vault server -dev -dev-listen-address="127.0.0.1:8200" -dev-root-token-id="my-root-token"
 
-# 2. Run the initialization script to set up engines and AppRole auth
+# Terminal 2: Initialize Transit & KV Secrets Engines
 cd backend
 python setup_vault.py
 ```
-
-### 2. Backend Setup
-```bash
-cd backend
-pip install -r requirements.txt
-
-# Start FastAPI Server (enforcing workers=1 for SQLite serialization safety)
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers=1
-```
-
-### 3. Frontend Setup
-```bash
-# Navigate to frontend
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start Vite React Dev Server
-npm run dev
-```
+> *Note: If Vault is not running, the application gracefully falls back to local authenticated encryption with AES-256-GCM for dev environments.*
 
 ---
 
-## 🧪 Running Security & Assessment Test Suite
+### 🐍 3. Backend Setup & Run
 
-To run the automated test suite covering Cybersecurity 360°, Multi-Tenant Isolation, Encryption, OIDC Auth, and RBAC:
+1. Open a terminal and navigate to the `backend/` folder:
+   ```bash
+   cd backend
+   ```
+
+2. *(Recommended)* Create and activate a Python virtual environment:
+   - **Windows (PowerShell)**:
+     ```powershell
+     python -m venv venv
+     .\venv\Scripts\Activate.ps1
+     ```
+   - **macOS / Linux**:
+     ```bash
+     python3 -m venv venv
+     source venv/bin/activate
+     ```
+
+3. Install all required backend dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Start the FastAPI backend server:
+   ```bash
+   # Enforces workers=1 for SQLite multi-process serialization safety
+   python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --workers 1
+   ```
+   - **API Base URL**: `http://localhost:8000`
+   - **Interactive Swagger Docs**: `http://localhost:8000/docs`
+   - **ReDoc API Documentation**: `http://localhost:8000/redoc`
+
+---
+
+### ⚛️ 4. Frontend Setup & Run
+
+1. Open a new terminal and navigate to the `frontend/` folder:
+   ```bash
+   cd frontend
+   ```
+
+2. Install Node dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Start the Vite React development server:
+   ```bash
+   npm run dev
+   ```
+   - **Web Application URL**: `http://localhost:5173`
+
+4. *(Optional)* Build for production:
+   ```bash
+   npm run build
+   npm run preview
+   ```
+
+---
+
+## 🧪 Automated Testing & Verification
+
+VendorRisk 360 includes a comprehensive test suite with **82+ automated unit, integration, and security tests** covering encryption, multi-tenancy, RBAC, cybersecurity assessments, vulnerability SLA tracking, vendor tiering, and supply chain graphs.
+
+### Run All Backend Tests:
 ```bash
 cd backend
-
-# 1. Run all backend pytest tests (includes test_cybersecurity_assessment.py)
 python -m pytest tests/ -v
+```
 
-# 2. Run full backend suite
-python run_test_suite.py
+### Run Module-Specific Test Suites:
+```bash
+# 1. Supply Chain & Fourth-Party Risk Management
+python -m pytest tests/test_supply_chain_management.py -v
+
+# 2. Risk-Based Vendor Tiering & Risk Trend Analysis
+python -m pytest tests/test_vendor_tiering_and_trend.py -v
+
+# 3. Vulnerability Management & CVE SLA Correlation
+python -m pytest tests/test_vulnerability_management.py -v
+
+# 4. Cybersecurity 360° Assessment & Evidence Verification
+python -m pytest tests/test_cybersecurity_assessment.py -v
+
+# 5. Multi-Tenant Data Isolation & Anti-IDOR Protections
+python -m pytest tests/test_dashboard_isolation.py -v
+
+# 6. Cryptography, Vault KMS, and Tamper-Evident Audit Logging
+python -m pytest tests/test_encryption.py -v
+
+# 7. OIDC Authentication, MFA, and Session Rotation
+python -m pytest tests/test_auth.py tests/test_auth_integration.py -v
 ```
 
 ---
 
-## ⚙️ Environment Variables
+## 🧭 Application Usage & Workflow
 
-Configure `backend/.env` with your API credentials.
-For Google Sign-In, set `GOOGLE_CLIENT_ID` in your shell profile or secure secret vaults:
-```bash
-export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
-export AUDIT_HMAC_KEY="your-random-hmac-checkpoint-key"
-```
+1. **Sign In**: Access `http://localhost:5173` and sign in via Google OIDC or enter your authorized enterprise credentials.
+2. **Executive Dashboard**: Review organization-wide risk distribution, critical supply chain dependencies, and risk trend metrics.
+3. **Vendor Management**:
+   - **Cybersecurity 360°**: Conduct 12-domain vendor assessments and verify uploaded compliance evidence.
+   - **Vulnerability Management**: Correlate live CVEs from NIST NVD and US CISA KEV against authorized vendor assets.
+   - **Risk Tiering**: Inspect calculated risk tiers (`Tier 1` to `Tier 4`), causal rationale factors, and apply authorized CISO overrides.
+   - **Fourth-Party / Supply Chain**: Add multi-tier downstream dependencies, inspect transitive blast-radius impacts, and view hierarchy trees.
+   - **Audit Logs**: Download cryptographically verifiable, HMAC-signed audit logs for compliance reviews.
