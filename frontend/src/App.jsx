@@ -212,84 +212,18 @@ export default function App() {
             </div>
           ) : (
             <>
-              {activeTab === 'overview' && (
-                <OverviewDashboard
-                  vendors={vendors}
-                  feed={feed}
-                  onSelectVendor={(id) => setSelectedVendorId(id)}
-                  onOpenAddModal={() => setIsAddModalOpen(true)}
-                  onRefreshVendor={fetchAllData}
-                  onDeleteVendor={handleDeleteVendor}
-                  onNavigateToContagion={() => setActiveTab('contagion')}
-                />
-              )}
-
-              {activeTab === 'incidents' && (
-                <IncidentManager
-                  vendors={vendors}
-                  onSelectVendor={(id) => setSelectedVendorId(id)}
-                  onRefreshVendorData={fetchAllData}
-                />
-              )}
-
-              {activeTab === 'compliance' && (
-                <ComplianceManager
-                  vendors={vendors}
-                />
-              )}
-
-              {activeTab === 'remediation' && (
-                <RemediationManager
-                  vendors={vendors}
-                />
-              )}
-
-              {activeTab === 'operational-risk' && (
-                <OperationalRiskManager
-                  vendors={vendors}
-                />
-              )}
-
-              {activeTab === 'documents' && (
-                <DocumentManager
-                  vendors={vendors}
-                />
-              )}
-
-              {activeTab === 'alerts' && (
-                <AlertManager />
-              )}
-
-              {activeTab === 'contagion' && (
-                <RiskContagionGraph
-                  contagionData={contagion}
-                  onSelectVendor={(id) => setSelectedVendorId(id)}
-                />
-              )}
-
-              {activeTab === 'vendors' && (
-                <VendorRoster
-                  vendors={vendors}
-                  onSelectVendor={(id) => setSelectedVendorId(id)}
-                  onOpenAddModal={() => setIsAddModalOpen(true)}
-                  onRefreshVendor={fetchAllData}
-                  onDeleteVendor={handleDeleteVendor}
-                />
-              )}
-
-              {activeTab === 'feed' && (
-                <LiveActivityFeed
-                  feed={feed}
-                  onSelectVendor={(id) => setSelectedVendorId(id)}
-                />
-              )}
-
-              {activeTab === 'quota' && (
-                <DevQuotaDrawer
-                  isOpen={true}
-                  onClose={() => setActiveTab('overview')}
-                />
-              )}
+              {/* Dedicated CISO Command Center Dashboard */}
+              <OverviewDashboard
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                vendors={vendors}
+                feed={feed}
+                onSelectVendor={(id) => setSelectedVendorId(id)}
+                onOpenAddModal={() => setIsAddModalOpen(true)}
+                onRefreshVendor={fetchAllData}
+                onDeleteVendor={handleDeleteVendor}
+                onNavigateToContagion={() => setActiveTab('risk-management')}
+              />
             </>
           )}
         </main>
