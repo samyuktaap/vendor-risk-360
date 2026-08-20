@@ -572,8 +572,198 @@ export default function OverviewDashboard({
         </div>
       )}
 
+      {/* ALL VENDORS FULL ROSTER - Only visible on 'vendors' tab */}
+      {activeTab === 'vendors' && (
+        <div className="bg-[#0a0f1d] border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+          <div className="p-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-cyan-400" />
+                All Enterprise Monitored Vendors
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                  {filteredVendors.length} of {vendors.length} Vendors
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Organization-wide view of all third-party vendor assets and their security posture.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search name, domain, sector..."
+                  value={searchFilter}
+                  onChange={(e) => setSearchFilter(e.target.value)}
+                  className="bg-[#070a12] border border-slate-800 focus:border-cyan-500 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-200 focus:outline-none w-48"
+                />
+              </div>
+              <div className="flex items-center bg-[#070a12] p-1 rounded-xl border border-slate-800">
+                {['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map(tier => (
+                  <button
+                    key={tier}
+                    onClick={() => setFilterRisk(tier)}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                      filterRisk === tier
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {tier}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider font-semibold bg-[#070a12]/80">
+                  <th className="py-3 px-4">Vendor &amp; Domain</th>
+                  <th className="py-3 px-4">Sector</th>
+                  <th className="py-3 px-4 text-center">Risk Score</th>
+                  <th className="py-3 px-4">Risk Level</th>
+                  <th className="py-3 px-4">Compliance %</th>
+                  <th className="py-3 px-4">Verification</th>
+                  <th className="py-3 px-4">CISO Status</th>
+                  <th className="py-3 px-4 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/40 font-mono">
+                {filteredVendors.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="py-12 text-center text-slate-400">
+                      {vendors.length === 0
+                        ? 'No vendors onboarded yet. Click "Onboard Vendor" to add your first vendor.'
+                        : 'No vendors match the selected filter criteria.'}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredVendors.map((vendor) => {
+                    const isCritical = vendor.risk_score >= 75 || vendor.risk_tier === 'CRITICAL';
+                    const isHigh = vendor.risk_score >= 60 && vendor.risk_score < 75;
+                    const isMedium = vendor.risk_score >= 40 && vendor.risk_score < 60;
+                    const compRate = computeComplianceRate(vendor);
+                    const verifyStatus = getVerificationStatus(vendor);
+                    const dec = decisions[vendor.id];
+
+                    const scoreColor = isCritical
+                      ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                      : isHigh
+                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                      : isMedium
+                      ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40';
+
+                    const avatarColor = isCritical
+                      ? 'bg-rose-950 border-rose-500/40 text-rose-300'
+                      : isHigh
+                      ? 'bg-amber-950 border-amber-500/40 text-amber-300'
+                      : isMedium
+                      ? 'bg-blue-950 border-blue-500/40 text-blue-300'
+                      : 'bg-emerald-950 border-emerald-500/40 text-emerald-300';
+
+                    return (
+                      <tr key={vendor.id} className="hover:bg-slate-800/30 transition-colors">
+                        {/* Vendor Name & Domain */}
+                        <td className="py-3.5 px-4">
+                          <div
+                            onClick={() => onSelectVendor(vendor.id)}
+                            className="flex items-center gap-3 cursor-pointer group"
+                          >
+                            <div className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold ${avatarColor}`}>
+                              {vendor.name.charAt(0)}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors">
+                                {vendor.name}
+                              </div>
+                              <div className="text-[11px] text-slate-400">{vendor.domain}</div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Sector */}
+                        <td className="py-3.5 px-4 text-slate-300 font-sans">{vendor.sector}</td>
+
+                        {/* Risk Score */}
+                        <td className="py-3.5 px-4 text-center">
+                          <span className={`text-sm font-black px-2.5 py-0.5 rounded-full border ${scoreColor}`}>
+                            {vendor.risk_score}
+                          </span>
+                        </td>
+
+                        {/* Risk Level */}
+                        <td className="py-3.5 px-4">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${scoreColor}`}>
+                            {isCritical ? 'CRITICAL' : isHigh ? 'HIGH' : isMedium ? 'MEDIUM' : 'LOW'}
+                          </span>
+                        </td>
+
+                        {/* Compliance % */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-200 font-bold">{compRate}%</span>
+                            <div className="w-14 bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                              <div
+                                className={`h-1.5 rounded-full ${compRate >= 85 ? 'bg-emerald-400' : compRate >= 55 ? 'bg-amber-400' : 'bg-rose-500'}`}
+                                style={{ width: `${compRate}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Verification Status */}
+                        <td className="py-3.5 px-4">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            verifyStatus === 'VERIFIED' ? 'bg-emerald-500/20 text-emerald-400' :
+                            verifyStatus === 'PENDING_REVIEW' ? 'bg-amber-500/20 text-amber-400' :
+                            'bg-rose-500/20 text-rose-400'
+                          }`}>
+                            {verifyStatus}
+                          </span>
+                        </td>
+
+                        {/* CISO Status */}
+                        <td className="py-3.5 px-4 font-sans">
+                          {dec ? (
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                              dec.action === 'APPROVED' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' :
+                              dec.action === 'REJECTED' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' :
+                              dec.action === 'ESCALATED' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
+                              'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            }`}>
+                              {dec.action.replace(/_/g, ' ')}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-500 italic">Monitoring</span>
+                          )}
+                        </td>
+
+                        {/* Action */}
+                        <td className="py-3.5 px-4 text-right font-sans">
+                          <button
+                            onClick={() => setSelectedVendorForDecision(vendor)}
+                            className="px-2.5 py-1 rounded-xl bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/20 text-xs font-bold transition-all cursor-pointer"
+                          >
+                            Decide
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* REQUIREMENT 4: HIGH-RISK VENDORS PROMINENT TABLE */}
-      {(activeTab === 'overview' || activeTab === 'risk-management' || activeTab === 'vendors') && (
+      {(activeTab === 'overview' || activeTab === 'risk-management') && (
         <div className="bg-[#0a0f1d] border border-rose-950/60 rounded-2xl shadow-xl overflow-hidden">
           <div className="p-5 border-b border-slate-800 bg-rose-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
