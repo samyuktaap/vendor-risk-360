@@ -1,0 +1,19 @@
+.ciso-dashboard {
+  padding: 1rem;
+  background: hsl(210,30%,12%);
+  color: #fff;
+  min-height: 100vh;
+}
+
+.summary-cards .card {
+  background: rgba(255,255,255,0.08);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 1rem;
+  text-align: center;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.summary-cards .card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
