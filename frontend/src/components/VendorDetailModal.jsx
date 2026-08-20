@@ -28,7 +28,8 @@ import {
   Sparkles,
   Brain,
   ArrowUpRight,
-  Target
+  Target,
+  Network
 } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import RiskScoreRing from './RiskScoreRing';

@@ -6,10 +6,11 @@ from datetime import datetime, timedelta
 DB_PATH = os.path.join(os.path.dirname(__file__), "vendor_risk.db")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
     except Exception:
         pass
     return conn
@@ -355,6 +356,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             company_id      INTEGER NOT NULL DEFAULT 1,
+            vendor_id       INTEGER,
             email           TEXT UNIQUE NOT NULL,
             name            TEXT NOT NULL,
             google_sub      TEXT UNIQUE NOT NULL,
@@ -365,6 +367,11 @@ def init_db():
             created_at      TEXT NOT NULL
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN vendor_id INTEGER")
+    except Exception:
+        pass
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             session_id       TEXT PRIMARY KEY,
@@ -466,7 +473,7 @@ def init_db():
         )
     """)
 
-    # Documents Table (Transit Envelope Encryption)
+    # Documents Table (Transit Envelope Encryption & Verification Engine)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -481,11 +488,34 @@ def init_db():
             expiry_date TEXT,
             wrapped_dek TEXT NOT NULL,
             integrity_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'UPLOADED',
+            verification_result_json TEXT,
+            extracted_data_json TEXT,
+            authenticity_risk TEXT DEFAULT 'UNKNOWN',
+            risk_reasons_json TEXT,
+            issuer_verified INTEGER DEFAULT 0,
+            verified_at TEXT,
+            error_message TEXT,
             FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
             FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON DELETE CASCADE,
             FOREIGN KEY (uploader_id) REFERENCES users (id) ON DELETE SET NULL
         )
     """)
+
+    for doc_col in [
+        "status TEXT NOT NULL DEFAULT 'UPLOADED'",
+        "verification_result_json TEXT",
+        "extracted_data_json TEXT",
+        "authenticity_risk TEXT DEFAULT 'UNKNOWN'",
+        "risk_reasons_json TEXT",
+        "issuer_verified INTEGER DEFAULT 0",
+        "verified_at TEXT",
+        "error_message TEXT"
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE documents ADD COLUMN {doc_col}")
+        except Exception:
+            pass
 
     # Alerts Table (MVP Alert Engine with Deduplication & Status Lifecycle)
     cursor.execute("""

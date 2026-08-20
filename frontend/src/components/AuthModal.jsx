@@ -84,7 +84,8 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    const mockToken = `mock_oidc_submanual_${email}_${email.split('@')[0]}_accounts.google.com_test-client-id_${exp}`;
+    const finalEmail = role === 'vendor' && !email.toLowerCase().includes('vendor') ? `vendor_${email}` : email;
+    const mockToken = `mock_oidc_submanual_${finalEmail}_${email.split('@')[0]}_accounts.google.com_test-client-id_${exp}`;
     handleLoginWithToken(mockToken);
   };
 

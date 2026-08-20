@@ -41,20 +41,35 @@ export default function App() {
     checkAuth();
   }, []);
 
+  const fetchVendorsOnly = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/vendors`);
+      if (res.ok) setVendors(await res.json());
+    } catch (e) { /* silent */ }
+  };
+
   const checkAuth = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/auth/me`);
       if (res.ok) {
         const data = await res.json();
-        setCurrentUser(data.user);
-        fetchAllData();
+        const user = data.user;
+        setCurrentUser(user);
+        const isVendor = user.account_type === 'VENDOR' || user.role === 'VENDOR' || user.role === 'vendor';
+        if (!isVendor) {
+          await fetchAllData();
+        } else {
+          setLoading(false);
+        }
       } else {
         setCurrentUser(null);
+        await fetchVendorsOnly();
         setIsAuthModalOpen(true);
       }
     } catch (err) {
       console.error("Error checking auth status:", err);
       setCurrentUser(null);
+      await fetchVendorsOnly();
       setIsAuthModalOpen(true);
     } finally {
       setAuthChecking(false);
@@ -63,8 +78,11 @@ export default function App() {
 
   const handleLogin = (user) => {
     setCurrentUser(user);
-    fetchAllData();
-    fetchAlertCount();
+    const isVendor = user.account_type === 'VENDOR' || user.role === 'VENDOR' || user.role === 'vendor';
+    if (!isVendor) {
+      fetchAllData();
+      fetchAlertCount();
+    }
   };
 
   const fetchAlertCount = async () => {
@@ -84,6 +102,10 @@ export default function App() {
       await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST' });
     } catch (e) {}
     setCurrentUser(null);
+    setVendors([]);
+    setFeed([]);
+    setContagion(null);
+    setSelectedVendorId(null);
     setIsAuthModalOpen(true);
   };
 
@@ -132,8 +154,8 @@ export default function App() {
     );
   }
 
-  // Dedicated View for Vendor Self-Service Login
-  if (currentUser && currentUser.role === 'vendor') {
+  // Dedicated View for Vendor Portal Login
+  if (currentUser && (currentUser.account_type === 'VENDOR' || currentUser.role === 'VENDOR' || currentUser.role === 'vendor')) {
     return (
       <>
         <VendorSelfServicePortal

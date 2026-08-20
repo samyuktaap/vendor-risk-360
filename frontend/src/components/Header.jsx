@@ -109,8 +109,10 @@ export default function Header({
                 <div className="font-bold text-slate-100 text-[11px] leading-tight truncate max-w-[100px]">
                   {currentUser.name}
                 </div>
-                <div className="text-[9px] text-slate-400 leading-tight">
-                  {currentUser.role === 'enterprise' ? 'CISO Admin' : 'Vendor Portal'}
+                <div className="text-[9px] text-slate-400 leading-tight font-semibold">
+                  {currentUser.account_type === 'ENTERPRISE' || ['CISO', 'ENTERPRISE_ADMIN', 'ANALYST', 'SUPER_ADMIN', 'ADMIN', 'enterprise'].includes(currentUser.role)
+                    ? 'CISO | Enterprise Portal'
+                    : 'Vendor | Vendor Portal'}
                 </div>
               </div>
             </button>

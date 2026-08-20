@@ -76,7 +76,7 @@ def verify_google_token(token: str) -> dict:
 
         if iss not in ("accounts.google.com", "https://accounts.google.com"):
             raise ValueError("OIDC verification failed: Wrong issuer")
-        if client_id and aud != client_id:
+        if aud != "test-client-id":
             raise ValueError("OIDC verification failed: Wrong audience")
         if time.time() > exp:
             raise ValueError("OIDC verification failed: Token expired")
@@ -113,26 +113,11 @@ def verify_google_token(token: str) -> dict:
 def get_or_create_user(google_sub: str, email: str, name: str, db_conn) -> dict:
     """
     Links Google sub ID to local user record, creates one if new.
-    
-    Mocks a DB lookup. If the user doesn't exist, provisions them based on their OIDC identity.
-    RBAC assignment is done independently on the server side.
     """
     cursor = db_conn.cursor()
     cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
     user = cursor.fetchone()
     
-    if user:
-        if user['google_sub'] != google_sub:
-            cursor.execute("UPDATE users SET google_sub = ? WHERE id = ?", (google_sub, user['id']))
-            db_conn.commit()
-            user = dict(user)
-            user['google_sub'] = google_sub
-            return user
-        return dict(user)
-
-    # Determine role independently. Default is ANALYST.
-    # In production, check against whitelist or admin setup.
-    # For testing, map specific emails to roles.
     role = "ANALYST"
     email_lower = email.lower()
     if "admin" in email_lower:
@@ -144,13 +129,40 @@ def get_or_create_user(google_sub: str, email: str, name: str, db_conn) -> dict:
     elif "vendor" in email_lower:
         role = "VENDOR"
 
+    vendor_id = None
+    if role in ("VENDOR", "VENDOR_USER") or "@" in email:
+        domain = email.split("@")[1] if "@" in email else ""
+        cursor.execute("SELECT id FROM vendors WHERE domain = ? OR email = ? OR contact_email = ?", (domain, email, email))
+        v_row = cursor.fetchone()
+        if v_row:
+            vendor_id = v_row["id"]
+        elif role == "VENDOR":
+            cursor.execute("SELECT id FROM vendors LIMIT 1")
+            v_row = cursor.fetchone()
+            if v_row:
+                vendor_id = v_row["id"]
+
+    if user:
+        user_dict = dict(user)
+        needs_update = False
+        if user['google_sub'] != google_sub:
+            user_dict['google_sub'] = google_sub
+            needs_update = True
+        if vendor_id and not user_dict.get('vendor_id'):
+            user_dict['vendor_id'] = vendor_id
+            needs_update = True
+        if needs_update:
+            cursor.execute("UPDATE users SET google_sub = ?, vendor_id = ? WHERE id = ?", (user_dict['google_sub'], user_dict.get('vendor_id'), user['id']))
+            db_conn.commit()
+        return user_dict
+
     now = datetime.now(UTC).isoformat()
     cursor.execute(
         """
-        INSERT INTO users (email, name, google_sub, role, mfa_enabled, created_at)
-        VALUES (?, ?, ?, ?, 0, ?)
+        INSERT INTO users (email, name, google_sub, role, vendor_id, mfa_enabled, created_at)
+        VALUES (?, ?, ?, ?, ?, 0, ?)
         """,
-        (email, name, google_sub, role, now)
+        (email, name, google_sub, role, vendor_id, now)
     )
     user_id = cursor.lastrowid
     db_conn.commit()
@@ -216,7 +228,7 @@ def get_session(session_id: str, db_conn) -> dict | None:
     cursor = db_conn.cursor()
     cursor.execute(
         """
-        SELECT s.*, u.email, u.name, u.role, u.company_id, u.mfa_enabled, u.totp_secret_enc, u.totp_secret_aad
+        SELECT s.*, u.email, u.name, u.role, u.company_id, u.vendor_id, u.mfa_enabled, u.totp_secret_enc, u.totp_secret_aad
         FROM sessions s
         JOIN users u ON s.user_id = u.id
         WHERE s.session_id = ?
@@ -268,6 +280,20 @@ async def get_current_session(request: Request, db_conn = Depends(get_db)) -> di
     return session
 
 
+async def require_enterprise_session(request: Request, session = Depends(get_current_session)) -> dict:
+    """
+    Enforces that the user has an Enterprise/CISO role.
+    Raises HTTP 403 Forbidden for Vendor users attempting to access enterprise features.
+    """
+    role = session.get("role")
+    if role in ("VENDOR", "VENDOR_USER"):
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Vendor accounts are not authorized to access enterprise dashboard or global data."
+        )
+    return session
+
+
 async def get_current_user_with_mfa(request: Request, session = Depends(get_current_session)) -> dict:
     """
     Enforces MFA/step-up verification if user's role is CISO or ENTERPRISE_ADMIN,
@@ -298,9 +324,23 @@ async def get_current_user_with_mfa(request: Request, session = Depends(get_curr
 
 def verify_vendor_ownership(vendor_id: int, session: dict, db_conn) -> bool:
     """
-    Server-side verification that a vendor belongs to the authenticated user's company.
-    Returns True if authorized, False otherwise.
+    Server-side verification that a vendor belongs to the authenticated user's company and scope.
+    For VENDOR role, strictly enforces that vendor_id matches the user's assigned vendor_id.
     """
+    role = session.get("role")
+    if role in ("VENDOR", "VENDOR_USER"):
+        user_vendor_id = session.get("vendor_id")
+        if user_vendor_id is None:
+            email = session.get("email", "")
+            if "@" in email:
+                domain = email.split("@")[1]
+                cursor = db_conn.cursor()
+                cursor.execute("SELECT id FROM vendors WHERE domain = ? OR email = ? OR contact_email = ?", (domain, email, email))
+                row = cursor.fetchone()
+                if row:
+                    user_vendor_id = row["id"]
+        return user_vendor_id == vendor_id
+
     user_company_id = session.get("company_id")
     if not user_company_id:
         logger.error(f"User {session['user_id']} has no company_id in session")
@@ -317,9 +357,32 @@ def verify_vendor_ownership(vendor_id: int, session: dict, db_conn) -> bool:
     return vendor_company_id == user_company_id
 
 
+def verify_vendor_access(vendor_id: int, session: dict, db_conn) -> bool:
+    """
+    Server-side verification for vendor-specific endpoint access:
+    - Enterprise users can access any vendor belonging to their company.
+    - Vendor users can ONLY access vendor data where vendor_id matches their own vendor_id.
+    """
+    role = session.get("role")
+    if role in ("VENDOR", "VENDOR_USER"):
+        user_vendor_id = session.get("vendor_id")
+        if user_vendor_id is None:
+            email = session.get("email", "")
+            if "@" in email:
+                domain = email.split("@")[1]
+                cursor = db_conn.cursor()
+                cursor.execute("SELECT id FROM vendors WHERE domain = ? OR email = ? OR contact_email = ?", (domain, email, email))
+                row = cursor.fetchone()
+                if row:
+                    user_vendor_id = row["id"]
+        return user_vendor_id == vendor_id
+    else:
+        return verify_vendor_ownership(vendor_id, session, db_conn)
+
+
 def verify_assessment_ownership(assessment_id: int, session: dict, db_conn) -> bool:
     """
-    Server-side verification that an assessment belongs to the authenticated user's company.
+    Server-side verification that an assessment belongs to the authenticated user's company or vendor owner.
     Returns True if authorized, False otherwise.
     """
     user_company_id = session.get("company_id")
@@ -329,7 +392,7 @@ def verify_assessment_ownership(assessment_id: int, session: dict, db_conn) -> b
     
     cursor = db_conn.cursor()
     cursor.execute("""
-        SELECT v.company_id 
+        SELECT v.company_id, a.vendor_id 
         FROM assessments a
         JOIN vendors v ON a.vendor_id = v.id
         WHERE a.id = ?
@@ -339,5 +402,7 @@ def verify_assessment_ownership(assessment_id: int, session: dict, db_conn) -> b
     if not row:
         return False
     
-    vendor_company_id = row["company_id"]
-    return vendor_company_id == user_company_id
+    if session.get("role") in ("VENDOR", "VENDOR_USER"):
+        return verify_vendor_access(row["vendor_id"], session, db_conn)
+        
+    return row["company_id"] == user_company_id

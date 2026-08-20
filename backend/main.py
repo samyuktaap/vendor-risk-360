@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()  # Load .env before any service imports that read env vars
+
 from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,7 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
-from services.auth_service import get_current_session, get_current_user_with_mfa, SESSION_COOKIE_NAME, verify_vendor_ownership, verify_assessment_ownership
+from services.auth_service import get_current_session, require_enterprise_session, get_current_user_with_mfa, SESSION_COOKIE_NAME, verify_vendor_ownership, verify_vendor_access, verify_assessment_ownership
 
 from database import (
     init_db, get_db, get_quota_stats,
@@ -219,14 +222,14 @@ def health_check():
     }
 
 @app.get("/api/dashboard/metrics")
-def get_dashboard_metrics_endpoint(session = Depends(get_current_session)):
+def get_dashboard_metrics_endpoint(session = Depends(require_enterprise_session)):
     user_company_id = session.get("company_id")
     if not user_company_id:
         raise HTTPException(status_code=403, detail="User has no company association")
     return get_dashboard_metrics(user_company_id)
 
 @app.get("/api/vendors")
-def get_vendors(session = Depends(get_current_session)):
+def get_vendors(session = Depends(require_enterprise_session)):
     user_company_id = session.get("company_id")
     if not user_company_id:
         raise HTTPException(status_code=403, detail="User has no company association")
@@ -612,7 +615,7 @@ class VendorIncidentCreate(BaseModel):
     status: str = Field(default="OPEN", example="OPEN")
 
 @app.get("/api/contagion")
-def get_risk_contagion_map(session = Depends(get_current_session)):
+def get_risk_contagion_map(session = Depends(require_enterprise_session)):
     """Returns network nodes and edges for the Risk Contagion View."""
     user_company_id = session.get("company_id")
     if not user_company_id:
@@ -650,16 +653,15 @@ def get_risk_contagion_map(session = Depends(get_current_session)):
             "risk_tier": v["risk_tier"]
         })
 
-        # Define link status & color based on risk score threshold
         if v["risk_score"] >= 70:
             link_status = "CRITICAL_CONTAGION"
-            color = "#f43f5e" # Rose red
+            color = "#f43f5e"
         elif v["risk_score"] >= 40:
             link_status = "ELEVATED_RISK"
-            color = "#f59e0b" # Amber
+            color = "#f59e0b"
         else:
             link_status = "SAFE_CONNECTION"
-            color = "#10b981" # Emerald green
+            color = "#10b981"
 
         edges.append({
             "source": "center_company",
@@ -678,7 +680,7 @@ def get_risk_contagion_map(session = Depends(get_current_session)):
     }
 
 @app.get("/api/feed")
-def get_activity_feed(limit: int = Query(20, ge=1, le=100), session = Depends(get_current_session)):
+def get_activity_feed(limit: int = Query(20, ge=1, le=100), session = Depends(require_enterprise_session)):
     user_company_id = session.get("company_id")
     if not user_company_id:
         raise HTTPException(status_code=403, detail="User has no company association")
@@ -698,7 +700,9 @@ def get_activity_feed(limit: int = Query(20, ge=1, le=100), session = Depends(ge
     return [dict(r) for r in rows]
 
 @app.get("/api/vendors/{vendor_id}/risk-events")
-def get_vendor_risk_events(vendor_id: int):
+def get_vendor_risk_events(vendor_id: int, session = Depends(get_current_session)):
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied to specified vendor data")
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
@@ -712,20 +716,21 @@ def get_vendor_risk_events(vendor_id: int):
     return [dict(r) for r in rows]
 
 @app.get("/api/stats")
-def get_dashboard_stats():
+def get_dashboard_stats(session = Depends(require_enterprise_session)):
+    user_company_id = session.get("company_id")
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) as total FROM vendors")
+    cursor.execute("SELECT COUNT(*) as total FROM vendors WHERE company_id = ?", (user_company_id,))
     total_vendors = cursor.fetchone()["total"]
-    cursor.execute("SELECT COUNT(*) as critical FROM vendors WHERE risk_tier = 'CRITICAL'")
+    cursor.execute("SELECT COUNT(*) as critical FROM vendors WHERE risk_tier = 'CRITICAL' AND company_id = ?", (user_company_id,))
     critical_count = cursor.fetchone()["critical"]
-    cursor.execute("SELECT COUNT(*) as high FROM vendors WHERE risk_tier = 'HIGH'")
+    cursor.execute("SELECT COUNT(*) as high FROM vendors WHERE risk_tier = 'HIGH' AND company_id = ?", (user_company_id,))
     high_count = cursor.fetchone()["high"]
-    cursor.execute("SELECT COUNT(*) as medium FROM vendors WHERE risk_tier = 'MEDIUM'")
+    cursor.execute("SELECT COUNT(*) as medium FROM vendors WHERE risk_tier = 'MEDIUM' AND company_id = ?", (user_company_id,))
     medium_count = cursor.fetchone()["medium"]
-    cursor.execute("SELECT COUNT(*) as low FROM vendors WHERE risk_tier = 'LOW'")
+    cursor.execute("SELECT COUNT(*) as low FROM vendors WHERE risk_tier = 'LOW' AND company_id = ?", (user_company_id,))
     low_count = cursor.fetchone()["low"]
-    cursor.execute("SELECT AVG(risk_score) as avg_score FROM vendors")
+    cursor.execute("SELECT AVG(risk_score) as avg_score FROM vendors WHERE company_id = ?", (user_company_id,))
     avg_score = cursor.fetchone()["avg_score"] or 0
     conn.close()
     return {
@@ -738,7 +743,7 @@ def get_dashboard_stats():
     }
 
 @app.get("/api/quota")
-def get_quota_debug_info(session = Depends(get_current_session)):
+def get_quota_debug_info(session = Depends(require_enterprise_session)):
     """Dev debug panel data for API call budgets and circuit breakers."""
     # Restrict quota debug to admin roles only
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN"):
@@ -772,8 +777,12 @@ def list_incidents(vendor_id: Optional[int] = Query(None), session = Depends(get
     if not user_company_id:
         raise HTTPException(status_code=403, detail="User has no company association")
     
+    if session.get("role") in ("VENDOR", "VENDOR_USER"):
+        if not vendor_id or not verify_vendor_ownership(vendor_id, session, get_db()):
+            raise HTTPException(status_code=403, detail="Access denied: Vendor users can only view their own incidents")
+        return get_incidents(vendor_id)
+
     if vendor_id:
-        # Verify vendor belongs to user's company
         if not verify_vendor_ownership(vendor_id, session, get_db()):
             raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
         incidents = get_incidents(vendor_id)
@@ -1047,7 +1056,7 @@ def update_compliance(framework_id: int, payload: ComplianceFrameworkUpdate, ses
     return {"message": "Compliance framework updated successfully."}
 
 @app.get("/api/compliance/summary")
-def get_compliance_stats(session = Depends(get_current_session)):
+def get_compliance_stats(session = Depends(require_enterprise_session)):
     """Get overall compliance statistics across all vendors."""
     user_company_id = session.get("company_id")
     if not user_company_id:
@@ -1056,12 +1065,45 @@ def get_compliance_stats(session = Depends(get_current_session)):
     summary = get_compliance_summary(company_id=user_company_id)
     return {"summary": summary}
 
+@app.get("/api/compliance")
+def get_compliance_generic(vendor_id: Optional[int] = Query(None), session = Depends(get_current_session)):
+    if session.get("role") in ("VENDOR", "VENDOR_USER"):
+        v_id = vendor_id or session.get("vendor_id")
+        if not v_id or not verify_vendor_ownership(v_id, session, get_db()):
+            raise HTTPException(status_code=403, detail="Access denied: Vendor users can only view their own compliance data")
+        frameworks = get_vendor_compliance_frameworks(v_id)
+        return frameworks
+    if vendor_id:
+        if not verify_vendor_ownership(vendor_id, session, get_db()):
+            raise HTTPException(status_code=403, detail="Access denied")
+        return get_vendor_compliance_frameworks(vendor_id)
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    return get_compliance_summary(company_id=user_company_id)
+
 # Remediation Task API Endpoints (VendorAuditAI-inspired)
+
+@app.get("/api/remediation")
+def get_remediation_generic(vendor_id: Optional[int] = Query(None), session = Depends(get_current_session)):
+    if session.get("role") in ("VENDOR", "VENDOR_USER"):
+        v_id = vendor_id or session.get("vendor_id")
+        if not v_id or not verify_vendor_ownership(v_id, session, get_db()):
+            raise HTTPException(status_code=403, detail="Access denied: Vendor users can only view their own remediation tasks")
+        tasks = get_vendor_remediation_tasks(v_id)
+        return tasks
+    if vendor_id:
+        if not verify_vendor_ownership(vendor_id, session, get_db()):
+            raise HTTPException(status_code=403, detail="Access denied")
+        return get_vendor_remediation_tasks(vendor_id)
+    user_company_id = session.get("company_id")
+    if not user_company_id:
+        raise HTTPException(status_code=403, detail="User has no company association")
+    return get_remediation_summary(company_id=user_company_id)
 
 @app.get("/api/vendors/{vendor_id}/remediation")
 def get_vendor_remediation(vendor_id: int, session = Depends(get_current_session)):
     """Get remediation tasks for a specific vendor."""
-    # Verify vendor belongs to user's company
     if not verify_vendor_ownership(vendor_id, session, get_db()):
         raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
     
@@ -1073,7 +1115,6 @@ def create_remediation(vendor_id: int, payload: RemediationTaskCreate, session =
     if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     
-    # Verify vendor belongs to user's company
     if not verify_vendor_ownership(vendor_id, session, get_db()):
         raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
     
@@ -1104,7 +1145,7 @@ def update_remediation(task_id: int, payload: RemediationTaskUpdate, session = D
     return {"message": f"Remediation task status updated to {payload.status}."}
 
 @app.get("/api/remediation/summary")
-def get_remediation_stats(session = Depends(get_current_session)):
+def get_remediation_stats(session = Depends(require_enterprise_session)):
     """Get overall remediation task statistics."""
     user_company_id = session.get("company_id")
     if not user_company_id:
@@ -1130,19 +1171,23 @@ class OperationalRiskUpdate(BaseModel):
     replaceability_score: Optional[int] = Field(default=70, example=45)
 
 @app.get("/api/operational-risk/summary")
-def get_operational_risk_summary_endpoint():
+def get_operational_risk_summary_endpoint(session = Depends(require_enterprise_session)):
     """Get aggregate Operational Risk KPIs across all vendors."""
     return get_operational_risk_summary()
 
 @app.get("/api/vendors/{vendor_id}/operational-risk")
-def get_vendor_operational_risk_endpoint(vendor_id: int):
+def get_vendor_operational_risk_endpoint(vendor_id: int, session = Depends(get_current_session)):
     """Fetch operational risk metrics for a specific vendor."""
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
     op_risk = get_vendor_operational_risk(vendor_id)
     return op_risk
 
 @app.post("/api/vendors/{vendor_id}/operational-risk")
-def update_vendor_operational_risk_endpoint(vendor_id: int, payload: OperationalRiskUpdate):
+def update_vendor_operational_risk_endpoint(vendor_id: int, payload: OperationalRiskUpdate, session = Depends(get_current_session)):
     """Update or create operational risk scorecard for a vendor."""
+    if not verify_vendor_ownership(vendor_id, session, get_db()):
+        raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
     updated = upsert_vendor_operational_risk(vendor_id, payload.dict(exclude_unset=True))
     return {
         "message": f"Operational Risk profile updated for vendor #{vendor_id}",
@@ -1200,13 +1245,43 @@ class GoogleLoginRequest(BaseModel):
 
 @app.get("/api/auth/me")
 def get_me_endpoint(session = Depends(get_current_session)):
+    role = session["role"]
+    is_vendor = role in ("VENDOR", "VENDOR_USER")
+    account_type = "VENDOR" if is_vendor else "ENTERPRISE"
+    display_role = "VENDOR" if is_vendor else "CISO"
+    
+    vendor_id = session.get("vendor_id")
+    vendor_name = session["name"]
+    vendor_domain = session["email"].split("@")[1] if "@" in session["email"] else ""
+    
+    if is_vendor:
+        db = get_db()
+        cursor = db.cursor()
+        if vendor_id:
+            cursor.execute("SELECT id, name, domain, sector FROM vendors WHERE id = ?", (vendor_id,))
+        else:
+            cursor.execute("SELECT id, name, domain, sector FROM vendors WHERE domain = ? OR email = ? OR contact_email = ?", (vendor_domain, session["email"], session["email"]))
+        v_row = cursor.fetchone()
+        if v_row:
+            vendor_id = v_row["id"]
+            vendor_name = v_row["name"]
+            vendor_domain = v_row["domain"]
+        db.close()
+
     return {
         "status": "success",
         "user": {
             "id": session["user_id"],
             "email": session["email"],
-            "name": session["name"],
-            "role": session["role"],
+            "name": vendor_name if is_vendor else session["name"],
+            "role": display_role,
+            "actual_role": role,
+            "account_type": account_type,
+            "company_id": session.get("company_id"),
+            "vendor_id": vendor_id,
+            "vendorId": vendor_id,
+            "domain": vendor_domain,
+            "sector": "Third-Party Vendor",
             "mfa_enabled": bool(session["mfa_enabled"]),
             "mfa_verified": bool(session["mfa_verified"])
         }
@@ -1248,7 +1323,8 @@ def google_login_endpoint(payload: GoogleLoginRequest, request: Request, respons
             actor_email=user["email"],
             actor_role=user["role"],
             ip_address=client_ip,
-            session_id=session_id
+            session_id=session_id,
+            db_conn=db_conn
         )
         
         # Determine if MFA step-up is required
@@ -1265,13 +1341,17 @@ def google_login_endpoint(payload: GoogleLoginRequest, request: Request, respons
             }
         }
     except Exception as e:
-        audit.record(
-            action=AuditAction.LOGIN_FAIL,
-            resource="auth:google-login",
-            outcome="DENIED",
-            ip_address=client_ip,
-            details={"error": str(e)}
-        )
+        try:
+            audit.record(
+                action=AuditAction.LOGIN_FAIL,
+                resource="auth:google-login",
+                outcome="DENIED",
+                ip_address=client_ip,
+                details={"error": str(e)},
+                db_conn=db_conn
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=401, detail=str(e))
     finally:
         db_conn.close()
@@ -2795,7 +2875,7 @@ async def upload_document(
 ):
     from services.audit_log_service import get_audit_log
     
-    if session["role"] not in ["SUPER_ADMIN", "ADMIN", "EDITOR", "VENDOR_USER"]:
+    if session["role"] not in ["SUPER_ADMIN", "ADMIN", "ENTERPRISE_ADMIN", "CISO", "ANALYST", "VENDOR", "AUDITOR", "EDITOR", "VENDOR_USER"]:
         raise HTTPException(status_code=403, detail="Unauthorized to upload documents")
         
     if not verify_vendor_ownership(vendor_id, session, get_db()):
@@ -2911,7 +2991,9 @@ def download_document(document_id: int, request: Request, session = Depends(get_
 
 @app.get("/api/alerts/count")
 def get_alert_count(session = Depends(get_current_session)):
-    """Return unread alert count for header badge (lightweight poll endpoint)."""
+    """Return unread alert count for header badge."""
+    if session.get("role") in ("VENDOR", "VENDOR_USER"):
+        return {"unread": 0}
     company_id = session.get("company_id")
     if not company_id:
         raise HTTPException(status_code=403, detail="User has no company association")
@@ -2924,7 +3006,7 @@ def list_alerts(
     alert_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     vendor_id: Optional[int] = Query(None),
-    session = Depends(get_current_session)
+    session = Depends(require_enterprise_session)
 ):
     """List all alerts for authenticated company. Lazily runs scheduled checks."""
     from services.audit_log_service import get_audit_log
@@ -2932,7 +3014,6 @@ def list_alerts(
     if not company_id:
         raise HTTPException(status_code=403, detail="User has no company association")
 
-    # Lazy scheduled checks — idempotent via dedup keys
     try:
         from services.alert_engine import run_all_scheduled_checks
         run_all_scheduled_checks(company_id)
@@ -2942,7 +3023,6 @@ def list_alerts(
 
     alerts = get_alerts(company_id, vendor_id=vendor_id, alert_type=alert_type, status=status)
 
-    # Audit ALERT_VIEWED
     audit = get_audit_log()
     client_ip = request.client.host if request.client else "127.0.0.1"
     audit.record(

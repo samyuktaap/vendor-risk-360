@@ -54,9 +54,12 @@ export default function IncidentManager({ vendors, onSelectVendor, onRefreshVend
   });
   const [submitting, setSubmitting] = useState(false);
 
+  // Synchronize vendor_id when vendors prop populates
   useEffect(() => {
-    fetchIncidents();
-  }, []);
+    if (vendors && vendors.length > 0 && !formData.vendor_id) {
+      setFormData(prev => ({ ...prev, vendor_id: vendors[0].id }));
+    }
+  }, [vendors]);
 
   const fetchIncidents = async () => {
     setLoading(true);
@@ -73,16 +76,35 @@ export default function IncidentManager({ vendors, onSelectVendor, onRefreshVend
     }
   };
 
+  const handleOpenModal = () => {
+    const defaultVendorId = formData.vendor_id || vendors[0]?.id || '';
+    setFormData(prev => ({ ...prev, vendor_id: defaultVendorId }));
+    setIsLogModalOpen(true);
+  };
+
   const handleCreateIncident = async (e) => {
     e.preventDefault();
-    if (!formData.vendor_id || !formData.title.trim()) return;
+    const effectiveVendorId = formData.vendor_id || vendors[0]?.id;
+    if (!effectiveVendorId) {
+      alert("Please select a target vendor.");
+      return;
+    }
+    if (!formData.title || !formData.title.trim()) {
+      alert("Please enter an Incident Summary Title.");
+      return;
+    }
 
     setSubmitting(true);
     try {
+      const payload = {
+        ...formData,
+        vendor_id: Number(effectiveVendorId),
+        title: formData.title.trim()
+      };
       const res = await fetch(`${API_BASE}/api/incidents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
@@ -97,9 +119,13 @@ export default function IncidentManager({ vendors, onSelectVendor, onRefreshVend
         });
         await fetchIncidents();
         if (onRefreshVendorData) onRefreshVendorData();
+      } else {
+        const errData = await res.json().catch(() => ({ detail: 'Failed to create incident' }));
+        alert(`Failed to log security incident: ${errData.detail || res.statusText}`);
       }
     } catch (err) {
-      console.error(err);
+      console.error("Error creating incident:", err);
+      alert(`Error: ${err.message}`);
     } finally {
       setSubmitting(false);
     }
@@ -169,8 +195,8 @@ export default function IncidentManager({ vendors, onSelectVendor, onRefreshVend
         </div>
 
         <button
-          onClick={() => setIsLogModalOpen(true)}
-          className="bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-semibold text-xs py-3 px-5 rounded-xl shadow-lg shadow-rose-950/50 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] self-start md:self-auto"
+          onClick={handleOpenModal}
+          className="bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-semibold text-xs py-3 px-5 rounded-xl shadow-lg shadow-rose-950/50 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] self-start md:self-auto cursor-pointer"
         >
           <Plus className="w-4 h-4 stroke-[2.5]" />
           <span>Log Security Incident</span>
@@ -404,9 +430,9 @@ export default function IncidentManager({ vendors, onSelectVendor, onRefreshVend
               <div>
                 <label className="block text-slate-300 font-medium mb-1">Target Vendor *</label>
                 <select
-                  value={formData.vendor_id}
+                  value={formData.vendor_id || (vendors[0]?.id || '')}
                   onChange={(e) => setFormData({ ...formData, vendor_id: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:border-cyan-500 focus:outline-none"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:border-cyan-500 focus:outline-none cursor-pointer"
                   required
                 >
                   {vendors.map(v => (

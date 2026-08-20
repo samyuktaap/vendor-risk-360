@@ -65,8 +65,8 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/shap-risk`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/incidents`),
-        fetch(`http://localhost:8000/api/remediation`),
-        fetch(`http://localhost:8000/api/compliance?vendor_id=${user.vendorId}`),
+        fetch(`http://localhost:8000/api/vendors/${user.vendorId}/remediation`),
+        fetch(`http://localhost:8000/api/vendors/${user.vendorId}/compliance`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/sub-vendors`),
         fetch(`http://localhost:8000/api/vendors/${user.vendorId}/risk-score`)
       ]);
@@ -79,9 +79,12 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
       }
       if (rRes.ok) {
         const rJson = await rRes.json();
-        setRemediations((rJson || []).filter(item => item.vendor_id === user.vendorId));
+        setRemediations(rJson.tasks || rJson || []);
       }
-      if (cRes.ok) setCompliance(await cRes.json());
+      if (cRes.ok) {
+        const cJson = await cRes.json();
+        setCompliance(cJson.frameworks || cJson || []);
+      }
       if (subRes.ok) setSubVendors(await subRes.json());
       if (detRes && detRes.ok) setDeterministicScore(await detRes.json());
     } catch (err) {
@@ -168,7 +171,7 @@ export default function VendorSelfServicePortal({ user, onSignOut }) {
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-black text-white tracking-tight">{user.name}</h1>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono font-bold">
-                VENDOR SELF-SERVICE PORTAL
+                Vendor | Vendor Portal
               </span>
             </div>
             <div className="text-xs text-slate-400 flex items-center gap-3 mt-1">
