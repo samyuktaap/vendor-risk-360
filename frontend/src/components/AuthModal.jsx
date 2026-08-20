@@ -71,13 +71,13 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
 
   const handleQuickDemoCiso = () => {
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    const mockToken = `mock_oidc_subciso_ciso@acme-corp.com_Sarah Jenkins_accounts.google.com_test-client-id_${exp}`;
+    const mockToken = `mock_oidc|subciso|ciso@acme-corp.com|Sarah Jenkins|accounts.google.com|test-client-id|${exp}`;
     handleLoginWithToken(mockToken);
   };
 
   const handleQuickDemoVendor = (vendor) => {
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    const mockToken = `mock_oidc_subvendor_${vendor.domain}_vendor@${vendor.domain}_${vendor.name}_accounts.google.com_test-client-id_${exp}`;
+    const mockToken = `mock_oidc|subvendor-${vendor.domain}|vendor@${vendor.domain}|${vendor.name}|accounts.google.com|test-client-id|${exp}`;
     handleLoginWithToken(mockToken);
   };
 
@@ -85,7 +85,7 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
     e.preventDefault();
     const exp = Math.floor(Date.now() / 1000) + 3600;
     const finalEmail = role === 'vendor' && !email.toLowerCase().includes('vendor') ? `vendor_${email}` : email;
-    const mockToken = `mock_oidc_submanual_${finalEmail}_${email.split('@')[0]}_accounts.google.com_test-client-id_${exp}`;
+    const mockToken = `mock_oidc|submanual|${finalEmail}|${email.split('@')[0]}|accounts.google.com|test-client-id|${exp}`;
     handleLoginWithToken(mockToken);
   };
 
