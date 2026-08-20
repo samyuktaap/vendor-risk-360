@@ -1093,16 +1093,230 @@ export default function OverviewDashboard({
         </div>
       )}
 
-      {/* REQUIREMENT 5 & 6: COMPLIANCE OVERVIEW & SECURITY ALERTS */}
-      {(activeTab === 'overview' || activeTab === 'compliance-overview' || activeTab === 'alerts') && (
+      {/* ─── COMPLIANCE OVERVIEW (dedicated full page) ─── */}
+      {activeTab === 'compliance-overview' && (
+        <div className="space-y-5">
+          {/* Header */}
+          <div className="bg-[#0a0f1d] border border-cyan-950/60 rounded-2xl p-5 shadow-xl">
+            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2 mb-1">
+              <Award className="w-5 h-5 text-cyan-400" />
+              Vendor Compliance Overview
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">{vendors.length} Vendors</span>
+            </h3>
+            <p className="text-xs text-slate-400">Full compliance posture across all monitored vendors. Track certifications, document status, and audit readiness.</p>
+          </div>
+
+          {/* Summary Stats */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
+            <div className="bg-[#0a0f1d] border border-emerald-900/60 rounded-2xl p-5 shadow-xl">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Fully Compliant</div>
+              <div className="text-3xl font-black text-emerald-400 mt-2">{compliantVendors.length}</div>
+              <div className="text-[10px] text-emerald-400/70 mt-1">Compliance Rate ≥ 85%</div>
+            </div>
+            <div className="bg-[#0a0f1d] border border-amber-900/60 rounded-2xl p-5 shadow-xl">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Partially Compliant</div>
+              <div className="text-3xl font-black text-amber-400 mt-2">{partiallyCompliantVendors.length}</div>
+              <div className="text-[10px] text-amber-400/70 mt-1">Compliance Rate 55–84%</div>
+            </div>
+            <div className="bg-[#0a0f1d] border border-rose-900/60 rounded-2xl p-5 shadow-xl">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Non-Compliant</div>
+              <div className="text-3xl font-black text-rose-400 mt-2">{nonCompliantVendors.length}</div>
+              <div className="text-[10px] text-rose-400/70 mt-1">Compliance Rate &lt; 55%</div>
+            </div>
+            <div className="bg-[#0a0f1d] border border-cyan-900/60 rounded-2xl p-5 shadow-xl">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Portfolio Average</div>
+              <div className="text-3xl font-black text-cyan-400 mt-2">{overallCompliancePercent}%</div>
+              <div className="text-[10px] text-cyan-400/70 mt-1">Overall Compliance Rate</div>
+            </div>
+          </div>
+
+          {/* Overall compliance bar */}
+          <div className="bg-[#0a0f1d] border border-slate-800 rounded-2xl p-5 shadow-xl">
+            <div className="flex justify-between text-xs mb-2">
+              <span className="text-slate-300 font-semibold">Portfolio Compliance Health</span>
+              <span className="font-mono font-bold text-cyan-400">{overallCompliancePercent}%</span>
+            </div>
+            <div className="w-full bg-slate-900 rounded-full h-4 border border-slate-800 overflow-hidden flex">
+              <div className="h-4 bg-emerald-500 transition-all" style={{ width: `${(compliantVendors.length / Math.max(1, vendors.length)) * 100}%` }} />
+              <div className="h-4 bg-amber-500 transition-all" style={{ width: `${(partiallyCompliantVendors.length / Math.max(1, vendors.length)) * 100}%` }} />
+              <div className="h-4 bg-rose-500 transition-all" style={{ width: `${(nonCompliantVendors.length / Math.max(1, vendors.length)) * 100}%` }} />
+            </div>
+            <div className="flex gap-4 mt-2 text-[10px] font-mono">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>Compliant</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block"/>Partial</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block"/>Non-Compliant</span>
+            </div>
+          </div>
+
+          {/* Per-vendor compliance table */}
+          <div className="bg-[#0a0f1d] border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+              <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-cyan-400" />
+                Per-Vendor Compliance Breakdown
+              </h4>
+              <span className="text-[10px] font-mono text-slate-400">{vendors.length} vendors tracked</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-[#070a12] text-slate-400 uppercase text-[10px] tracking-wider font-semibold">
+                    <th className="py-3 px-4">Vendor</th>
+                    <th className="py-3 px-4 text-center">Compliance %</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">SOC 2</th>
+                    <th className="py-3 px-4">ISO 27001</th>
+                    <th className="py-3 px-4">DPA</th>
+                    <th className="py-3 px-4">Risk Score</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/40 font-mono">
+                  {[...vendors].sort((a, b) => computeComplianceRate(a) - computeComplianceRate(b)).map(vendor => {
+                    const rate = computeComplianceRate(vendor);
+                    const statusLabel = rate >= 85 ? 'COMPLIANT' : rate >= 55 ? 'PARTIAL' : 'NON-COMPLIANT';
+                    const statusColor = rate >= 85 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : rate >= 55 ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40';
+                    const soc2 = vendor.risk_score >= 75 ? 'MISSING' : 'UPLOADED';
+                    const iso = vendor.risk_score >= 60 ? 'EXPIRED' : 'VERIFIED';
+                    const docColor = (s) => s === 'VERIFIED' || s === 'UPLOADED' ? 'text-emerald-400' : s === 'EXPIRED' ? 'text-orange-400' : 'text-rose-400';
+                    return (
+                      <tr key={vendor.id} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="py-3 px-4">
+                          <div onClick={() => onSelectVendor(vendor.id)} className="flex items-center gap-2 cursor-pointer group">
+                            <div className="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-slate-300 group-hover:text-cyan-300 transition-colors">
+                              {vendor.name.charAt(0)}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors">{vendor.name}</div>
+                              <div className="text-[10px] text-slate-500">{vendor.domain}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-100">{rate}%</span>
+                            <div className="flex-1 bg-slate-900 rounded-full h-1.5 border border-slate-800 overflow-hidden min-w-[60px]">
+                              <div className={`h-1.5 rounded-full ${rate >= 85 ? 'bg-emerald-400' : rate >= 55 ? 'bg-amber-400' : 'bg-rose-500'}`} style={{ width: `${rate}%` }} />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${statusColor}`}>{statusLabel}</span>
+                        </td>
+                        <td className={`py-3 px-4 font-semibold ${docColor(soc2)}`}>{soc2}</td>
+                        <td className={`py-3 px-4 font-semibold ${docColor(iso)}`}>{iso}</td>
+                        <td className="py-3 px-4 text-emerald-400 font-semibold">UPLOADED</td>
+                        <td className="py-3 px-4">
+                          <span className={`font-mono font-bold ${vendor.risk_score >= 75 ? 'text-rose-400' : vendor.risk_score >= 60 ? 'text-amber-400' : vendor.risk_score >= 40 ? 'text-blue-400' : 'text-emerald-400'}`}>
+                            {vendor.risk_score}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── SECURITY ALERTS (dedicated full page) ─── */}
+      {activeTab === 'alerts' && (
+        <div className="space-y-5">
+          {/* Header */}
+          <div className="bg-[#0a0f1d] border border-amber-950/60 rounded-2xl p-5 shadow-xl">
+            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2 mb-1">
+              <Bell className="w-5 h-5 text-amber-400 animate-pulse" />
+              CISO Security Alerts Hub
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                {cisoSecurityAlerts.filter(a => !acknowledgedAlerts[a.id]).length} Active
+              </span>
+            </h3>
+            <p className="text-xs text-slate-400">Real-time security alerts requiring CISO attention. Acknowledge alerts to mark them as reviewed.</p>
+          </div>
+
+          {/* Alert Stats */}
+          <div className="grid grid-cols-3 gap-4 font-mono">
+            <div className="bg-[#0a0f1d] border border-rose-900/60 rounded-2xl p-4 shadow-xl">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Critical Alerts</div>
+              <div className="text-2xl font-black text-rose-400 mt-1">
+                {cisoSecurityAlerts.filter(a => a.severity === 'CRITICAL').length}
+              </div>
+            </div>
+            <div className="bg-[#0a0f1d] border border-amber-900/60 rounded-2xl p-4 shadow-xl">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">High Alerts</div>
+              <div className="text-2xl font-black text-amber-400 mt-1">
+                {cisoSecurityAlerts.filter(a => a.severity === 'HIGH').length}
+              </div>
+            </div>
+            <div className="bg-[#0a0f1d] border border-slate-700/60 rounded-2xl p-4 shadow-xl">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Acknowledged</div>
+              <div className="text-2xl font-black text-slate-400 mt-1">
+                {Object.values(acknowledgedAlerts).filter(Boolean).length}
+              </div>
+            </div>
+          </div>
+
+          {/* CRITICAL alerts first */}
+          {['CRITICAL', 'HIGH', 'MEDIUM'].map(sev => {
+            const sevAlerts = cisoSecurityAlerts.filter(a => a.severity === sev);
+            if (sevAlerts.length === 0) return null;
+            const sevColor = sev === 'CRITICAL' ? 'text-rose-400 border-rose-900/60 bg-rose-950/20' : sev === 'HIGH' ? 'text-amber-400 border-amber-900/60 bg-amber-950/15' : 'text-blue-400 border-blue-900/50 bg-blue-950/10';
+            const badgeColor = sev === 'CRITICAL' ? 'bg-rose-500/20 text-rose-400 border-rose-500/40' : sev === 'HIGH' ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' : 'bg-blue-500/20 text-blue-400 border-blue-500/40';
+            const icon = sev === 'CRITICAL' ? <AlertCircle className="w-4 h-4 text-rose-400 animate-pulse" /> : sev === 'HIGH' ? <AlertTriangle className="w-4 h-4 text-amber-400" /> : <Bell className="w-4 h-4 text-blue-400" />;
+            return (
+              <div key={sev} className={`bg-[#0a0f1d] border rounded-2xl shadow-xl overflow-hidden ${sevColor}`}>
+                <div className={`p-4 border-b border-slate-800 flex items-center gap-2 ${sev === 'CRITICAL' ? 'bg-rose-950/25' : sev === 'HIGH' ? 'bg-amber-950/15' : 'bg-blue-950/10'}`}>
+                  {icon}
+                  <span className={`text-sm font-bold uppercase tracking-wider ${sev === 'CRITICAL' ? 'text-rose-300' : sev === 'HIGH' ? 'text-amber-300' : 'text-blue-300'}`}>{sev} Priority Alerts</span>
+                  <span className={`ml-auto px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${badgeColor}`}>{sevAlerts.length}</span>
+                </div>
+                <div className="divide-y divide-slate-800/50">
+                  {sevAlerts.map(alert => (
+                    <div key={alert.id} className={`p-4 flex items-start justify-between gap-4 text-xs transition-colors ${acknowledgedAlerts[alert.id] ? 'opacity-50' : 'hover:bg-slate-800/20'}`}>
+                      <div className="flex-1">
+                        <div className="font-bold text-slate-100 flex items-center gap-2 mb-1">
+                          {alert.title}
+                          {acknowledgedAlerts[alert.id] && <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-mono">ACKNOWLEDGED</span>}
+                        </div>
+                        <p className="text-slate-400 text-[11px] leading-relaxed">{alert.description}</p>
+                        <p className="text-slate-600 text-[10px] font-mono mt-1">{alert.timestamp || 'Live Monitor'}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {alert.vendor && (
+                          <button
+                            onClick={() => setSelectedVendorForDecision(alert.vendor)}
+                            className="px-2.5 py-1 rounded-lg bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-[10px] font-semibold hover:bg-cyan-500/20 cursor-pointer transition-all"
+                          >
+                            Review Vendor
+                          </button>
+                        )}
+                        <button
+                          onClick={() => { setAcknowledgedAlerts({ ...acknowledgedAlerts, [alert.id]: true }); showToast("Alert acknowledged."); }}
+                          disabled={acknowledgedAlerts[alert.id]}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold border cursor-pointer transition-all ${acknowledgedAlerts[alert.id] ? 'bg-slate-800 text-slate-500 border-slate-700' : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'}`}
+                        >
+                          {acknowledgedAlerts[alert.id] ? 'Done ✓' : 'Acknowledge'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─── OVERVIEW: compact 2-col side-by-side of Compliance + Alerts ─── */}
+      {activeTab === 'overview' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* SECTION 5: Compliance Overview */}
+          {/* Compliance Summary */}
           <div className="bg-[#0a0f1d] border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
             <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
               <Award className="w-5 h-5 text-cyan-400" />
               Vendor Compliance Overview
             </h3>
-
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
               <div className="p-3 rounded-xl bg-[#070a12] border border-slate-800">
                 <span className="text-[10px] text-slate-400">Compliant</span>
@@ -1121,43 +1335,45 @@ export default function OverviewDashboard({
                 <div className="text-xl font-bold text-cyan-400 mt-1">{overallCompliancePercent}%</div>
               </div>
             </div>
+            <button onClick={() => setActiveTab && setActiveTab('compliance-overview')} className="w-full py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer">
+              <ChevronRight className="w-3.5 h-3.5" /> View Full Compliance Report
+            </button>
           </div>
 
-          {/* SECTION 6: Security Alerts */}
+          {/* Alerts Summary */}
           <div className="bg-[#0a0f1d] border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
             <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
               <Bell className="w-5 h-5 text-amber-400" />
               CISO Security Alerts Hub
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                {cisoSecurityAlerts.filter(a => !acknowledgedAlerts[a.id]).length} Active
+              </span>
             </h3>
-
-            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-52 overflow-y-auto pr-1">
               {cisoSecurityAlerts.map(alert => (
                 <div key={alert.id} className="p-3 rounded-xl bg-[#070a12] border border-slate-800 flex items-start justify-between gap-3 text-xs">
                   <div>
                     <div className="font-bold text-slate-200 flex items-center gap-2">
                       {alert.title}
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
-                        alert.severity === 'CRITICAL' ? 'bg-rose-500/20 text-rose-400' : 'bg-amber-500/20 text-amber-400'
-                      }`}>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${alert.severity === 'CRITICAL' ? 'bg-rose-500/20 text-rose-400' : alert.severity === 'HIGH' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'}`}>
                         {alert.severity}
                       </span>
                     </div>
                     <p className="text-slate-400 text-[11px] mt-0.5">{alert.description}</p>
                   </div>
-
                   <button
-                    onClick={() => {
-                      setAcknowledgedAlerts({ ...acknowledgedAlerts, [alert.id]: true });
-                      showToast("Alert acknowledged.");
-                    }}
+                    onClick={() => { setAcknowledgedAlerts({ ...acknowledgedAlerts, [alert.id]: true }); showToast("Alert acknowledged."); }}
                     disabled={acknowledgedAlerts[alert.id]}
-                    className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-[10px] font-semibold border border-slate-700 cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-[10px] font-semibold border border-slate-700 cursor-pointer flex-shrink-0"
                   >
                     {acknowledgedAlerts[alert.id] ? 'Done ✓' : 'Ack'}
                   </button>
                 </div>
               ))}
             </div>
+            <button onClick={() => setActiveTab && setActiveTab('alerts')} className="w-full py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer">
+              <ChevronRight className="w-3.5 h-3.5" /> View All Alerts
+            </button>
           </div>
         </div>
       )}
