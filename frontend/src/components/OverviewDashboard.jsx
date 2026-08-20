@@ -65,6 +65,10 @@ export default function OverviewDashboard({
   // Vendor selected for Decision Center review
   const [selectedVendorForDecision, setSelectedVendorForDecision] = useState(null);
 
+  // Inline decision panel open state (for All Vendors table row expansion)
+  const [decisionPanelVendorId, setDecisionPanelVendorId] = useState(null);
+  const [decisionNotes, setDecisionNotes] = useState('');
+
   // Selected Vendor IDs for Comparison Matrix
   const [compareIds, setCompareIds] = useState([]);
 
@@ -649,6 +653,7 @@ export default function OverviewDashboard({
                     const compRate = computeComplianceRate(vendor);
                     const verifyStatus = getVerificationStatus(vendor);
                     const dec = decisions[vendor.id];
+                    const isPanelOpen = decisionPanelVendorId === vendor.id;
 
                     const scoreColor = isCritical
                       ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
@@ -666,93 +671,200 @@ export default function OverviewDashboard({
                       ? 'bg-blue-950 border-blue-500/40 text-blue-300'
                       : 'bg-emerald-950 border-emerald-500/40 text-emerald-300';
 
+                    const subScores = [
+                      { label: 'Data Breach (HIBP)', value: vendor.hibp_score ?? Math.round(vendor.risk_score * 0.35), color: 'bg-rose-500', textColor: 'text-rose-400' },
+                      { label: 'News / Reputation', value: vendor.news_score ?? Math.round(vendor.risk_score * 0.25), color: 'bg-amber-500', textColor: 'text-amber-400' },
+                      { label: 'Sanctions Exposure', value: vendor.sanctions_score ?? Math.round(vendor.risk_score * 0.2), color: 'bg-purple-500', textColor: 'text-purple-400' },
+                      { label: 'IP Abuse Intel', value: vendor.abuse_score ?? Math.round(vendor.risk_score * 0.2), color: 'bg-blue-500', textColor: 'text-blue-400' },
+                    ];
+
+                    const mockDocs = [
+                      { name: 'SOC 2 Type II Report', status: vendor.risk_score >= 75 ? 'MISSING' : 'UPLOADED', date: '2026-07-15' },
+                      { name: 'ISO 27001 Certificate', status: vendor.risk_score >= 60 ? 'EXPIRED' : 'VERIFIED', date: '2026-06-01' },
+                      { name: 'Data Processing Addendum', status: 'UPLOADED', date: '2026-08-01' },
+                      { name: 'Penetration Test Report', status: vendor.risk_score >= 70 ? 'PENDING_REVIEW' : 'VERIFIED', date: '2026-05-20' },
+                    ];
+
                     return (
-                      <tr key={vendor.id} className="hover:bg-slate-800/30 transition-colors">
-                        {/* Vendor Name & Domain */}
-                        <td className="py-3.5 px-4">
-                          <div
-                            onClick={() => onSelectVendor(vendor.id)}
-                            className="flex items-center gap-3 cursor-pointer group"
-                          >
-                            <div className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold ${avatarColor}`}>
-                              {vendor.name.charAt(0)}
-                            </div>
-                            <div>
-                              <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors">
-                                {vendor.name}
+                      <React.Fragment key={vendor.id}>
+                        <tr className={`transition-colors ${isPanelOpen ? 'bg-slate-800/25 border-l-2 border-l-cyan-500' : 'hover:bg-slate-800/20'}`}>
+                          {/* Vendor Name & Domain */}
+                          <td className="py-3.5 px-4">
+                            <div
+                              onClick={() => onSelectVendor(vendor.id)}
+                              className="flex items-center gap-3 cursor-pointer group"
+                            >
+                              <div className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold ${avatarColor}`}>
+                                {vendor.name.charAt(0)}
                               </div>
-                              <div className="text-[11px] text-slate-400">{vendor.domain}</div>
+                              <div>
+                                <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors">
+                                  {vendor.name}
+                                </div>
+                                <div className="text-[11px] text-slate-400">{vendor.domain}</div>
+                              </div>
                             </div>
-                          </div>
-                        </td>
-
-                        {/* Sector */}
-                        <td className="py-3.5 px-4 text-slate-300 font-sans">{vendor.sector}</td>
-
-                        {/* Risk Score */}
-                        <td className="py-3.5 px-4 text-center">
-                          <span className={`text-sm font-black px-2.5 py-0.5 rounded-full border ${scoreColor}`}>
-                            {vendor.risk_score}
-                          </span>
-                        </td>
-
-                        {/* Risk Level */}
-                        <td className="py-3.5 px-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${scoreColor}`}>
-                            {isCritical ? 'CRITICAL' : isHigh ? 'HIGH' : isMedium ? 'MEDIUM' : 'LOW'}
-                          </span>
-                        </td>
-
-                        {/* Compliance % */}
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-200 font-bold">{compRate}%</span>
-                            <div className="w-14 bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-800">
-                              <div
-                                className={`h-1.5 rounded-full ${compRate >= 85 ? 'bg-emerald-400' : compRate >= 55 ? 'bg-amber-400' : 'bg-rose-500'}`}
-                                style={{ width: `${compRate}%` }}
-                              />
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Verification Status */}
-                        <td className="py-3.5 px-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            verifyStatus === 'VERIFIED' ? 'bg-emerald-500/20 text-emerald-400' :
-                            verifyStatus === 'PENDING_REVIEW' ? 'bg-amber-500/20 text-amber-400' :
-                            'bg-rose-500/20 text-rose-400'
-                          }`}>
-                            {verifyStatus}
-                          </span>
-                        </td>
-
-                        {/* CISO Status */}
-                        <td className="py-3.5 px-4 font-sans">
-                          {dec ? (
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
-                              dec.action === 'APPROVED' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' :
-                              dec.action === 'REJECTED' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' :
-                              dec.action === 'ESCALATED' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
-                              'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                            }`}>
-                              {dec.action.replace(/_/g, ' ')}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-300 font-sans">{vendor.sector}</td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span className={`text-sm font-black px-2.5 py-0.5 rounded-full border ${scoreColor}`}>
+                              {vendor.risk_score}
                             </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-500 italic">Monitoring</span>
-                          )}
-                        </td>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${scoreColor}`}>
+                              {isCritical ? 'CRITICAL' : isHigh ? 'HIGH' : isMedium ? 'MEDIUM' : 'LOW'}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-slate-200 font-bold">{compRate}%</span>
+                              <div className="w-14 bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                                <div className={`h-1.5 rounded-full ${compRate >= 85 ? 'bg-emerald-400' : compRate >= 55 ? 'bg-amber-400' : 'bg-rose-500'}`} style={{ width: `${compRate}%` }} />
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${verifyStatus === 'VERIFIED' ? 'bg-emerald-500/20 text-emerald-400' : verifyStatus === 'PENDING_REVIEW' ? 'bg-amber-500/20 text-amber-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                              {verifyStatus}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 font-sans">
+                            {dec ? (
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${dec.action === 'APPROVED' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : dec.action === 'REJECTED' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' : dec.action === 'ESCALATED' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' : 'bg-amber-500/20 text-amber-300 border-amber-500/40'}`}>
+                                {dec.action.replace(/_/g, ' ')}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 italic">Monitoring</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-sans">
+                            <button
+                              onClick={() => { setDecisionPanelVendorId(isPanelOpen ? null : vendor.id); setDecisionNotes(''); }}
+                              className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer border ${isPanelOpen ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400/60' : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20'}`}
+                            >
+                              {isPanelOpen ? '▲ Close' : '▼ Decide'}
+                            </button>
+                          </td>
+                        </tr>
 
-                        {/* Action */}
-                        <td className="py-3.5 px-4 text-right font-sans">
-                          <button
-                            onClick={() => setSelectedVendorForDecision(vendor)}
-                            className="px-2.5 py-1 rounded-xl bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/20 text-xs font-bold transition-all cursor-pointer"
-                          >
-                            Decide
-                          </button>
-                        </td>
-                      </tr>
+                        {/* ── INLINE DECISION PANEL ── */}
+                        {isPanelOpen && (
+                          <tr>
+                            <td colSpan="8" className="p-0 border-b border-slate-700/80">
+                              <div className="bg-gradient-to-br from-[#06091a] to-[#0a0f1d] border-l-2 border-l-cyan-500 p-6 space-y-5">
+
+                                {/* Panel Header */}
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                                  <div>
+                                    <h4 className="text-base font-black text-slate-100 flex items-center gap-2">
+                                      <ShieldAlert className="w-5 h-5 text-cyan-400" />
+                                      {vendor.name} — CISO Decision Panel
+                                    </h4>
+                                    <p className="text-[11px] text-slate-400 font-mono mt-0.5">{vendor.domain} · {vendor.sector} · Added: {vendor.created_at ? new Date(vendor.created_at).toLocaleDateString() : 'N/A'}</p>
+                                  </div>
+                                  <div className="flex items-center gap-5 font-mono">
+                                    <div className="text-center">
+                                      <div className="text-[9px] text-slate-400 uppercase tracking-wider">Risk Score</div>
+                                      <div className={`text-2xl font-black ${isCritical ? 'text-rose-400' : isHigh ? 'text-amber-400' : isMedium ? 'text-blue-400' : 'text-emerald-400'}`}>
+                                        {vendor.risk_score}<span className="text-xs text-slate-600">/100</span>
+                                      </div>
+                                    </div>
+                                    <div className="text-center border-l border-slate-700 pl-5">
+                                      <div className="text-[9px] text-slate-400 uppercase tracking-wider">Compliance</div>
+                                      <div className="text-2xl font-black text-cyan-400">{compRate}<span className="text-xs text-slate-600">%</span></div>
+                                    </div>
+                                    <div className="text-center border-l border-slate-700 pl-5">
+                                      <div className="text-[9px] text-slate-400 uppercase tracking-wider">Verification</div>
+                                      <div className={`text-sm font-bold mt-1 ${verifyStatus === 'VERIFIED' ? 'text-emerald-400' : verifyStatus === 'PENDING_REVIEW' ? 'text-amber-400' : 'text-rose-400'}`}>
+                                        {verifyStatus.replace(/_/g,' ')}
+                                      </div>
+                                    </div>
+                                    <span className={`px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase border ${isCritical ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' : isHigh ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : isMedium ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'}`}>
+                                      {isCritical ? 'CRITICAL' : isHigh ? 'HIGH' : isMedium ? 'MEDIUM' : 'LOW'} RISK
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                                  {/* COL 1: Risk Sub-Score Breakdown */}
+                                  <div className="space-y-3">
+                                    <h5 className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                      <ShieldAlert className="w-3.5 h-3.5 text-rose-400" /> Risk Intel Breakdown
+                                    </h5>
+                                    {subScores.map(s => (
+                                      <div key={s.label}>
+                                        <div className="flex justify-between text-[10px] mb-1">
+                                          <span className="text-slate-400">{s.label}</span>
+                                          <span className={`font-bold font-mono ${s.textColor}`}>{s.value}/100</span>
+                                        </div>
+                                        <div className="w-full bg-slate-900 rounded-full h-2 border border-slate-800 overflow-hidden">
+                                          <div className={`h-2 rounded-full ${s.color}`} style={{ width: `${s.value}%` }} />
+                                        </div>
+                                        <div className="text-[9px] mt-0.5 text-slate-500">{s.value >= 70 ? '⚠ Elevated' : s.value >= 40 ? '~ Moderate' : '✓ Acceptable'}</div>
+                                      </div>
+                                    ))}
+                                    <div className="mt-3 pt-3 border-t border-slate-800 text-[10px] font-mono space-y-1.5">
+                                      <div className="flex justify-between"><span className="text-slate-400">Last Assessed</span><span className="text-slate-200">{vendor.last_checked_at ? new Date(vendor.last_checked_at).toLocaleDateString() : 'N/A'}</span></div>
+                                      <div className="flex justify-between"><span className="text-slate-400">Previous Decision</span><span className={`font-bold ${dec ? 'text-cyan-300' : 'text-slate-500 italic'}`}>{dec ? dec.action.replace(/_/g,' ') : 'None recorded'}</span></div>
+                                    </div>
+                                  </div>
+
+                                  {/* COL 2: Compliance Documents */}
+                                  <div className="space-y-3">
+                                    <h5 className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                      <FileText className="w-3.5 h-3.5 text-cyan-400" /> Compliance Documents
+                                    </h5>
+                                    {mockDocs.map(doc => (
+                                      <div key={doc.name} className="flex items-center justify-between bg-[#070a12] border border-slate-800 rounded-xl px-3 py-2.5">
+                                        <div>
+                                          <div className="text-[11px] font-semibold text-slate-200">{doc.name}</div>
+                                          <div className="text-[10px] text-slate-500 font-mono">Submitted: {doc.date}</div>
+                                        </div>
+                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${doc.status === 'VERIFIED' ? 'bg-emerald-500/20 text-emerald-400' : doc.status === 'UPLOADED' ? 'bg-blue-500/20 text-blue-400' : doc.status === 'PENDING_REVIEW' ? 'bg-amber-500/20 text-amber-400' : doc.status === 'EXPIRED' ? 'bg-orange-500/20 text-orange-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                                          {doc.status.replace(/_/g,' ')}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {/* COL 3: Governance Decision */}
+                                  <div className="space-y-3">
+                                    <h5 className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                      <CheckSquare className="w-3.5 h-3.5 text-emerald-400" /> Governance Decision
+                                    </h5>
+                                    <textarea
+                                      rows={3}
+                                      placeholder="Add decision notes / justification (optional)..."
+                                      value={decisionNotes}
+                                      onChange={e => setDecisionNotes(e.target.value)}
+                                      className="w-full bg-[#070a12] border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none resize-none placeholder:text-slate-600"
+                                    />
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button onClick={() => { handleDecisionAction(vendor, 'APPROVED', decisionNotes); setDecisionPanelVendorId(null); }} className="py-2.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer">
+                                        <CheckCircle2 className="w-3.5 h-3.5" /> APPROVE
+                                      </button>
+                                      <button onClick={() => { handleDecisionAction(vendor, 'REJECTED', decisionNotes); setDecisionPanelVendorId(null); }} className="py-2.5 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer">
+                                        <XCircle className="w-3.5 h-3.5" /> REJECT
+                                      </button>
+                                      <button onClick={() => { handleDecisionAction(vendor, 'REMEDIATION_REQUESTED', decisionNotes); setDecisionPanelVendorId(null); }} className="py-2.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer">
+                                        <RotateCcw className="w-3.5 h-3.5" /> REMEDIATE
+                                      </button>
+                                      <button onClick={() => { handleDecisionAction(vendor, 'ESCALATED', decisionNotes); setDecisionPanelVendorId(null); }} className="py-2.5 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/40 hover:bg-purple-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer">
+                                        <AlertTriangle className="w-3.5 h-3.5" /> ESCALATE
+                                      </button>
+                                    </div>
+                                    <button onClick={() => onSelectVendor(vendor.id)} className="w-full py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer">
+                                      <ChevronRight className="w-3.5 h-3.5" /> Open Full Vendor Profile
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })
                 )}
@@ -762,8 +874,90 @@ export default function OverviewDashboard({
         </div>
       )}
 
-      {/* REQUIREMENT 4: HIGH-RISK VENDORS PROMINENT TABLE */}
-      {(activeTab === 'overview' || activeTab === 'risk-management') && (
+      {/* RISK MANAGEMENT: DEDICATED PER-VENDOR RISK INTELLIGENCE VIEW */}
+      {activeTab === 'risk-management' && (
+        <div className="space-y-4">
+          <div className="bg-[#0a0f1d] border border-rose-950/50 rounded-2xl p-5 shadow-xl">
+            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2 mb-1">
+              <ShieldAlert className="w-5 h-5 text-rose-400" />
+              Vendor Risk Intelligence Center
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/30">{vendors.length} Vendors Monitored</span>
+            </h3>
+            <p className="text-xs text-slate-400">Sorted by risk severity · Sub-scores: Data Breach · News Reputation · Sanctions Exposure · IP Abuse</p>
+          </div>
+
+          <div className="space-y-3">
+            {[...vendors].sort((a, b) => b.risk_score - a.risk_score).map(vendor => {
+              const isCritical = vendor.risk_score >= 75;
+              const isHigh = vendor.risk_score >= 60 && vendor.risk_score < 75;
+              const isMedium = vendor.risk_score >= 40 && vendor.risk_score < 60;
+              const compRate = computeComplianceRate(vendor);
+              const dec = decisions[vendor.id];
+              const riskLabel = isCritical ? 'CRITICAL' : isHigh ? 'HIGH' : isMedium ? 'MEDIUM' : 'LOW';
+              const borderColor = isCritical ? 'border-rose-900/80' : isHigh ? 'border-amber-900/70' : isMedium ? 'border-blue-900/50' : 'border-emerald-900/40';
+              const headerBg = isCritical ? 'bg-rose-950/25' : isHigh ? 'bg-amber-950/15' : isMedium ? 'bg-blue-950/15' : 'bg-emerald-950/10';
+              const avatarCls = isCritical ? 'bg-rose-950 border-rose-500/40 text-rose-300' : isHigh ? 'bg-amber-950 border-amber-500/40 text-amber-300' : isMedium ? 'bg-blue-950 border-blue-500/40 text-blue-300' : 'bg-emerald-950 border-emerald-500/40 text-emerald-300';
+              const scoreTextColor = isCritical ? 'text-rose-400' : isHigh ? 'text-amber-400' : isMedium ? 'text-blue-400' : 'text-emerald-400';
+              const badgeCls = isCritical ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' : isHigh ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : isMedium ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+
+              const subScores = [
+                { label: 'Data Breach (HIBP)', value: vendor.hibp_score ?? Math.round(vendor.risk_score * 0.35), color: 'bg-rose-500', textColor: 'text-rose-400' },
+                { label: 'News / Reputation', value: vendor.news_score ?? Math.round(vendor.risk_score * 0.25), color: 'bg-amber-500', textColor: 'text-amber-400' },
+                { label: 'Sanctions Exposure', value: vendor.sanctions_score ?? Math.round(vendor.risk_score * 0.2), color: 'bg-purple-500', textColor: 'text-purple-400' },
+                { label: 'IP Abuse Intel', value: vendor.abuse_score ?? Math.round(vendor.risk_score * 0.2), color: 'bg-blue-500', textColor: 'text-blue-400' },
+              ];
+
+              return (
+                <div key={vendor.id} className={`bg-[#0a0f1d] border ${borderColor} rounded-2xl shadow-xl overflow-hidden`}>
+                  <div className={`${headerBg} p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl border flex items-center justify-center font-black text-sm ${avatarCls}`}>{vendor.name.charAt(0)}</div>
+                      <div>
+                        <div onClick={() => onSelectVendor(vendor.id)} className="font-bold text-slate-100 hover:text-cyan-300 cursor-pointer transition-colors flex items-center gap-2">
+                          {vendor.name}
+                          {dec && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${dec.action === 'APPROVED' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : dec.action === 'REJECTED' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : dec.action === 'ESCALATED' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'}`}>{dec.action.replace(/_/g,' ')}</span>}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono">{vendor.domain} · {vendor.sector}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 font-mono">
+                      <div className="text-center">
+                        <div className="text-[9px] text-slate-400 uppercase">Overall Score</div>
+                        <div className={`text-2xl font-black ${scoreTextColor}`}>{vendor.risk_score}<span className="text-xs text-slate-600">/100</span></div>
+                      </div>
+                      <span className={`px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase border ${badgeCls}`}>{riskLabel}</span>
+                      <div className="text-center border-l border-slate-700 pl-4">
+                        <div className="text-[9px] text-slate-400 uppercase">Compliance</div>
+                        <div className="text-xl font-black text-cyan-400">{compRate}%</div>
+                      </div>
+                      <button onClick={() => setSelectedVendorForDecision(vendor)} className="px-3 py-1.5 rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30 text-xs font-bold transition-all cursor-pointer">
+                        Review &amp; Decide
+                      </button>
+                    </div>
+                  </div>
+                  <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {subScores.map(s => (
+                      <div key={s.label}>
+                        <div className="flex justify-between text-[10px] mb-1.5">
+                          <span className="text-slate-400">{s.label}</span>
+                          <span className={`font-bold font-mono ${s.textColor}`}>{s.value}</span>
+                        </div>
+                        <div className="w-full bg-slate-900 rounded-full h-2.5 border border-slate-800 overflow-hidden">
+                          <div className={`h-2.5 rounded-full ${s.color}`} style={{ width: `${s.value}%` }} />
+                        </div>
+                        <div className="text-[9px] mt-1 text-slate-500">{s.value >= 70 ? '⚠ Elevated' : s.value >= 40 ? '~ Moderate' : '✓ Acceptable'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* REQUIREMENT 4: HIGH-RISK VENDORS PROMINENT TABLE (overview only) */}
+      {activeTab === 'overview' && (
         <div className="bg-[#0a0f1d] border border-rose-950/60 rounded-2xl shadow-xl overflow-hidden">
           <div className="p-5 border-b border-slate-800 bg-rose-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
