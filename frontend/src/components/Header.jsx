@@ -116,6 +116,14 @@ export default function Header({
                 </div>
               </div>
             </button>
+            <button
+              onClick={onSignOut}
+              title="Sign Out"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 border border-rose-500/30 hover:bg-rose-500/20 hover:border-rose-500/50 rounded-xl text-xs text-rose-400 font-semibold transition-all cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
           </div>
         ) : (
           <button

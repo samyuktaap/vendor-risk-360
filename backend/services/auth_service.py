@@ -110,7 +110,7 @@ def verify_google_token(token: str) -> dict:
 # User Creation / Linking & RBAC assignment
 # ---------------------------------------------------------------------------
 
-def get_or_create_user(google_sub: str, email: str, name: str, db_conn) -> dict:
+def get_or_create_user(google_sub: str, email: str, name: str, db_conn, requested_role: Optional[str] = None, requested_vendor_id: Optional[int] = None) -> dict:
     """
     Links Google sub ID to local user record, creates one if new.
     """
@@ -120,7 +120,15 @@ def get_or_create_user(google_sub: str, email: str, name: str, db_conn) -> dict:
     
     role = "ANALYST"
     email_lower = email.lower()
-    if "admin" in email_lower:
+    if requested_role:
+        req = requested_role.upper()
+        if req in ("VENDOR", "VENDOR_USER"):
+            role = "VENDOR"
+        elif req in ("ENTERPRISE", "CISO", "ENTERPRISE_ADMIN", "ADMIN"):
+            role = "CISO"
+        else:
+            role = req
+    elif "admin" in email_lower:
         role = "ENTERPRISE_ADMIN"
     elif "ciso" in email_lower:
         role = "CISO"
@@ -129,8 +137,8 @@ def get_or_create_user(google_sub: str, email: str, name: str, db_conn) -> dict:
     elif "vendor" in email_lower:
         role = "VENDOR"
 
-    vendor_id = None
-    if role in ("VENDOR", "VENDOR_USER") or "@" in email:
+    vendor_id = requested_vendor_id
+    if not vendor_id and (role in ("VENDOR", "VENDOR_USER") or "@" in email):
         domain = email.split("@")[1] if "@" in email else ""
         cursor.execute("SELECT id FROM vendors WHERE domain = ? OR email = ? OR contact_email = ?", (domain, email, email))
         v_row = cursor.fetchone()
@@ -148,11 +156,14 @@ def get_or_create_user(google_sub: str, email: str, name: str, db_conn) -> dict:
         if user['google_sub'] != google_sub:
             user_dict['google_sub'] = google_sub
             needs_update = True
-        if vendor_id and not user_dict.get('vendor_id'):
+        if requested_role and user_dict['role'] != role:
+            user_dict['role'] = role
+            needs_update = True
+        if vendor_id and user_dict.get('vendor_id') != vendor_id:
             user_dict['vendor_id'] = vendor_id
             needs_update = True
         if needs_update:
-            cursor.execute("UPDATE users SET google_sub = ?, vendor_id = ? WHERE id = ?", (user_dict['google_sub'], user_dict.get('vendor_id'), user['id']))
+            cursor.execute("UPDATE users SET google_sub = ?, role = ?, vendor_id = ? WHERE id = ?", (user_dict['google_sub'], user_dict['role'], user_dict.get('vendor_id'), user['id']))
             db_conn.commit()
         return user_dict
 

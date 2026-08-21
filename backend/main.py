@@ -1242,6 +1242,8 @@ def remove_sub_vendor(sub_id: int, session = Depends(get_current_user_with_mfa))
 # Google OIDC & MFA Endpoints
 class GoogleLoginRequest(BaseModel):
     id_token: str
+    requested_role: Optional[str] = None
+    vendor_id: Optional[int] = None
 
 @app.get("/api/auth/me")
 def get_me_endpoint(session = Depends(get_current_session)):
@@ -1303,8 +1305,15 @@ def google_login_endpoint(payload: GoogleLoginRequest, request: Request, respons
         sub = idinfo["sub"]
         name = idinfo.get("name", email.split("@")[0])
         
-        # 2. Get or create user
-        user = get_or_create_user(sub, email, name, db_conn)
+        # 2. Get or create user with role preferences
+        user = get_or_create_user(
+            sub, 
+            email, 
+            name, 
+            db_conn, 
+            requested_role=payload.requested_role, 
+            requested_vendor_id=payload.vendor_id
+        )
         
         # 3. Session Fixation Protection: Revoke any existing session in incoming cookies
         from services.auth_service import SESSION_COOKIE_NAME, revoke_session

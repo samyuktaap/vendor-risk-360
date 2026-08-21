@@ -45,13 +45,21 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
 
   if (!isOpen) return null;
 
-  const handleLoginWithToken = async (idToken) => {
+  const handleLoginWithToken = async (idToken, customRole, customVendorId) => {
     setLoading(true);
+    const activeRole = customRole || (role === 'vendor' ? 'VENDOR' : 'CISO');
+    const activeVendorId = customVendorId !== undefined ? customVendorId : (role === 'vendor' ? (Number(selectedVendorId) || undefined) : undefined);
+
     try {
       const res = await fetch('http://localhost:8000/api/auth/google-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id_token: idToken })
+        credentials: 'include',
+        body: JSON.stringify({ 
+          id_token: idToken,
+          requested_role: activeRole,
+          vendor_id: activeVendorId
+        })
       });
       if (res.ok) {
         const data = await res.json();
@@ -72,21 +80,31 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
   const handleQuickDemoCiso = () => {
     const exp = Math.floor(Date.now() / 1000) + 3600;
     const mockToken = `mock_oidc|subciso|ciso@acme-corp.com|Sarah Jenkins|accounts.google.com|test-client-id|${exp}`;
-    handleLoginWithToken(mockToken);
+    handleLoginWithToken(mockToken, 'CISO', null);
   };
 
   const handleQuickDemoVendor = (vendor) => {
     const exp = Math.floor(Date.now() / 1000) + 3600;
     const mockToken = `mock_oidc|subvendor-${vendor.domain}|vendor@${vendor.domain}|${vendor.name}|accounts.google.com|test-client-id|${exp}`;
-    handleLoginWithToken(mockToken);
+    handleLoginWithToken(mockToken, 'VENDOR', vendor.id);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    // Demo credentials for quick vendor login (no Google)
+    const demoEmail = "demo@vendor.com";
+    const demoPassword = "demo123";
+    if (email === demoEmail && password === demoPassword) {
+      const exp = Math.floor(Date.now() / 1000) + 3600;
+      const mockToken = `mock_oidc|submanual|${demoEmail}|${demoEmail.split('@')[0]}|accounts.google.com|test-client-id|${exp}`;
+      handleLoginWithToken(mockToken, 'VENDOR', undefined);
+      return;
+    }
+    // Existing flow – generates mock token based on entered email/password (for demo purposes)
     const exp = Math.floor(Date.now() / 1000) + 3600;
     const finalEmail = role === 'vendor' && !email.toLowerCase().includes('vendor') ? `vendor_${email}` : email;
     const mockToken = `mock_oidc|submanual|${finalEmail}|${email.split('@')[0]}|accounts.google.com|test-client-id|${exp}`;
-    handleLoginWithToken(mockToken);
+    handleLoginWithToken(mockToken, role === 'vendor' ? 'VENDOR' : 'CISO', role === 'vendor' ? (Number(selectedVendorId) || undefined) : undefined);
   };
 
   return (
@@ -194,18 +212,33 @@ export default function AuthModal({ isOpen, onClose, onLogin, vendors = [] }) {
               </button>
             ) : (
               <div className="grid grid-cols-2 gap-2">
-                {vendors.slice(0, 4).map((v) => (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => handleQuickDemoVendor(v)}
-                    className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 text-slate-200 text-xs text-left transition-all group min-h-[44px] box-border"
-                  >
-                    <div className="font-bold text-slate-100 truncate group-hover:text-cyan-300">{v.name}</div>
-                    <div className="text-[10px] text-slate-400 truncate">{v.domain}</div>
-                  </button>
-                ))}
-              </div>
+  {vendors.slice(0, 4).map((v) => (
+    <button
+      key={v.id}
+      type="button"
+      onClick={() => handleQuickDemoVendor(v)}
+      className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 text-slate-200 text-xs text-left transition-all group min-h-[44px] box-border"
+    >
+      <div className="font-bold text-slate-100 truncate group-hover:text-cyan-300">{v.name}</div>
+      <div className="text-[10px] text-slate-400 truncate">{v.domain}</div>
+    </button>
+  ))}
+  {/* Quick Demo Vendor (hardcoded) */}
+  <button
+    type="button"
+    onClick={() => handleQuickDemoVendor({ id: 0, name: 'Demo Vendor', domain: 'demo.vendor.com' })}
+    className="w-full p-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center justify-between transition-all group min-h-[44px] box-border"
+  >
+    <div className="flex items-center gap-3">
+      <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-300 font-bold flex items-center justify-center">DV</div>
+      <div className="text-left">
+        <div className="font-bold text-white group-hover:text-emerald-200">Demo Vendor</div>
+        <div className="text-[10px] text-slate-400">demo.vendor.com</div>
+      </div>
+    </div>
+    <ArrowRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-1 transition-transform" />
+  </button>
+</div>
             )}
           </div>
 

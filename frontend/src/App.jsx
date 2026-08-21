@@ -37,6 +37,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
 
+  // Helper to determine if the logged‑in user is a Vendor
+  const isVendor = (user) => {
+    if (!user) return false;
+    return (
+      user.account_type === 'VENDOR' ||
+      (typeof user.role === 'string' && user.role.toUpperCase() === 'VENDOR')
+    );
+  };
+
   useEffect(() => {
     checkAuth();
   }, []);
@@ -50,7 +59,7 @@ export default function App() {
 
   const checkAuth = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/auth/me`);
+      const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         const user = data.user;
@@ -99,7 +108,7 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST' });
+      await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
     } catch (e) {}
     setCurrentUser(null);
     setVendors([]);
@@ -155,7 +164,7 @@ export default function App() {
   }
 
   // Dedicated View for Vendor Portal Login
-  if (currentUser && (currentUser.account_type === 'VENDOR' || currentUser.role === 'VENDOR' || currentUser.role === 'vendor')) {
+  if (currentUser && isVendor(currentUser)) {
     return (
       <>
         <VendorSelfServicePortal
