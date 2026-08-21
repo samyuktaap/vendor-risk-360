@@ -24,7 +24,7 @@ async def run():
         
         # Click Vendors
         try:
-            await page.click("text=Monitored Vendors")
+            await page.click("text=All Vendors")
         except Exception as e:
             await page.screenshot(path="error.png")
             print("Failed to find Vendors. Extracted text:")
@@ -85,7 +85,7 @@ async def run():
         await page.wait_for_timeout(2000)
         
         # Open same vendor and tab again
-        await page.click("text=Monitored Vendors")
+        await page.click("text=All Vendors")
         await page.wait_for_timeout(500)
         await page.click("text=Atlassian")
         await page.wait_for_timeout(500)

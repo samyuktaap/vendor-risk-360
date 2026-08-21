@@ -1204,19 +1204,19 @@ class SubVendorCreate(BaseModel):
 @app.get("/api/vendors/{vendor_id}/sub-vendors")
 def get_vendor_sub_vendors(vendor_id: int, session = Depends(get_current_session)):
     """Retrieve 4th-party sub-vendors supplying a specific 3rd-party vendor."""
-    # Verify vendor belongs to user's company
-    if not verify_vendor_ownership(vendor_id, session, get_db()):
+    from services.auth_service import verify_vendor_access
+    if not verify_vendor_access(vendor_id, session, get_db()):
         raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
     
     return get_sub_vendors(vendor_id)
 
 @app.post("/api/vendors/{vendor_id}/sub-vendors", status_code=201)
-def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate, session = Depends(get_current_user_with_mfa)):
-    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST"):
+def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate, session = Depends(get_current_session)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST", "VENDOR", "VENDOR_USER"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     
-    # Verify vendor belongs to user's company
-    if not verify_vendor_ownership(vendor_id, session, get_db()):
+    from services.auth_service import verify_vendor_access
+    if not verify_vendor_access(vendor_id, session, get_db()):
         raise HTTPException(status_code=403, detail="Access denied: Vendor does not belong to your company")
     
     """Add a 4th-party sub-vendor under a 3rd-party vendor with domain existence verification."""
@@ -1232,8 +1232,8 @@ def create_vendor_sub_vendor(vendor_id: int, sub: SubVendorCreate, session = Dep
     return {"id": sub_id, "message": f"Added 4th-party sub-vendor {sub.name} for vendor ID {vendor_id}"}
 
 @app.delete("/api/sub-vendors/{sub_id}")
-def remove_sub_vendor(sub_id: int, session = Depends(get_current_user_with_mfa)):
-    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN"):
+def remove_sub_vendor(sub_id: int, session = Depends(get_current_session)):
+    if session["role"] not in ("CISO", "ENTERPRISE_ADMIN", "ANALYST", "VENDOR", "VENDOR_USER"):
         raise HTTPException(status_code=403, detail="Unauthorized role for this operation.")
     """Remove a 4th-party sub-vendor from the supply chain graph."""
     delete_sub_vendor(sub_id)
@@ -1250,7 +1250,6 @@ def get_me_endpoint(session = Depends(get_current_session)):
     role = session["role"]
     is_vendor = role in ("VENDOR", "VENDOR_USER")
     account_type = "VENDOR" if is_vendor else "ENTERPRISE"
-    display_role = "VENDOR" if is_vendor else "CISO"
     
     vendor_id = session.get("vendor_id")
     vendor_name = session["name"]
@@ -1276,7 +1275,7 @@ def get_me_endpoint(session = Depends(get_current_session)):
             "id": session["user_id"],
             "email": session["email"],
             "name": vendor_name if is_vendor else session["name"],
-            "role": display_role,
+            "role": role,
             "actual_role": role,
             "account_type": account_type,
             "company_id": session.get("company_id"),
@@ -1339,13 +1338,39 @@ def google_login_endpoint(payload: GoogleLoginRequest, request: Request, respons
         # Determine if MFA step-up is required
         mfa_required = user["role"] in ("CISO", "ENTERPRISE_ADMIN") or bool(user["mfa_enabled"])
         
+        is_vendor = user["role"] in ("VENDOR", "VENDOR_USER")
+        account_type = "VENDOR" if is_vendor else "ENTERPRISE"
+
+        vendor_id = user.get("vendor_id")
+        vendor_name = user["name"]
+        vendor_domain = user["email"].split("@")[1] if "@" in user["email"] else ""
+        
+        if is_vendor:
+            cursor = db_conn.cursor()
+            if vendor_id:
+                cursor.execute("SELECT id, name, domain, sector FROM vendors WHERE id = ?", (vendor_id,))
+            else:
+                cursor.execute("SELECT id, name, domain, sector FROM vendors WHERE domain = ? OR email = ? OR contact_email = ?", (vendor_domain, user["email"], user["email"]))
+            v_row = cursor.fetchone()
+            if v_row:
+                vendor_id = v_row["id"]
+                vendor_name = v_row["name"]
+                vendor_domain = v_row["domain"]
+
         return {
             "status": "success",
             "user": {
                 "id": user["id"],
                 "email": user["email"],
-                "name": user["name"],
+                "name": vendor_name if is_vendor else user["name"],
                 "role": user["role"],
+                "actual_role": user["role"],
+                "account_type": account_type,
+                "company_id": user.get("company_id", 1),
+                "vendor_id": vendor_id,
+                "vendorId": vendor_id,
+                "domain": vendor_domain,
+                "sector": "Third-Party Vendor",
                 "mfa_required": mfa_required
             }
         }

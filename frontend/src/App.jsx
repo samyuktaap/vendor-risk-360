@@ -64,8 +64,7 @@ export default function App() {
         const data = await res.json();
         const user = data.user;
         setCurrentUser(user);
-        const isVendor = user.account_type === 'VENDOR' || user.role === 'VENDOR' || user.role === 'vendor';
-        if (!isVendor) {
+        if (!isVendor(user)) {
           await fetchAllData();
         } else {
           setLoading(false);
@@ -87,8 +86,7 @@ export default function App() {
 
   const handleLogin = (user) => {
     setCurrentUser(user);
-    const isVendor = user.account_type === 'VENDOR' || user.role === 'VENDOR' || user.role === 'vendor';
-    if (!isVendor) {
+    if (!isVendor(user)) {
       fetchAllData();
       fetchAlertCount();
     }
